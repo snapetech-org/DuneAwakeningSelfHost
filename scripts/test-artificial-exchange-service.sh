@@ -88,6 +88,11 @@ if ! grep -q "^EnvironmentFile=$env_file$" "$watchdog_service"; then
   exit 1
 fi
 
+if ! grep -q '^Environment=DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true$' "$watchdog_service"; then
+  printf 'rendered watchdog service does not avoid rereading the dotenv file\n' >&2
+  exit 1
+fi
+
 if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-watchdog.sh $env_file$" "$watchdog_service"; then
   printf 'rendered watchdog service did not use checkout watchdog path\n' >&2
   exit 1

@@ -17,6 +17,15 @@ env_value() {
   local key="$1"
   local default="${2:-}"
   local line value
+  value="${!key:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+  if [[ "${DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE:-}" =~ ^([1Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+    printf '%s' "$default"
+    return
+  fi
   line="$(grep -E "^${key}=" "$env_file" | tail -n 1 || true)"
   if [[ -z "$line" ]]; then
     printf '%s' "$default"

@@ -8,4 +8,5 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+Environment=DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/artificial-exchange-watchdog.sh /opt/DuneAwakeningSelfHost/.env

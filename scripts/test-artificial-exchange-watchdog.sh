@@ -32,9 +32,24 @@ cat > "$tmp_dir/bin/python3" <<'EOF'
 [[ "${FAKE_READY:-false}" == true ]]
 EOF
 
-chmod +x "$tmp_dir/bin/systemctl" "$tmp_dir/bin/python3"
+cat > "$tmp_dir/bin/grep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "${WATCHDOG_ENV_FILE:-}" ]]; then
+    : > "$WATCHDOG_ENV_READ_FILE"
+  fi
+done
+exec /usr/bin/grep "$@"
+EOF
+
+chmod +x "$tmp_dir/bin/systemctl" "$tmp_dir/bin/python3" "$tmp_dir/bin/grep"
 
 blocked_output="$(PATH="$tmp_dir/bin:/usr/bin:/bin" STARTED_FILE="$started_file" FAKE_READY=false \
+  WATCHDOG_ENV_FILE="$env_file" WATCHDOG_ENV_READ_FILE="$tmp_dir/env-read" \
+  DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true \
+  DUNE_ARTIFICIAL_EXCHANGE_ENABLED=true DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=false \
+  DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=false DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_DRY_RUN=false \
   "$repo_root/scripts/artificial-exchange-watchdog.sh" "$env_file")"
 if ! grep -q '"readinessBlocked":true' <<<"$blocked_output"; then
   printf 'watchdog did not report the failed readiness gate\n' >&2
@@ -46,9 +61,17 @@ if [[ -e "$started_file" ]]; then
 fi
 
 ready_output="$(PATH="$tmp_dir/bin:/usr/bin:/bin" STARTED_FILE="$started_file" FAKE_READY=true \
+  WATCHDOG_ENV_FILE="$env_file" WATCHDOG_ENV_READ_FILE="$tmp_dir/env-read" \
+  DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true \
+  DUNE_ARTIFICIAL_EXCHANGE_ENABLED=true DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=false \
+  DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=false DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_DRY_RUN=false \
   "$repo_root/scripts/artificial-exchange-watchdog.sh" "$env_file")"
 if ! grep -q '"started":true' <<<"$ready_output" || [[ ! -e "$started_file" ]]; then
   printf 'watchdog did not start the buyer after readiness passed\n' >&2
+  exit 1
+fi
+if [[ -e "$tmp_dir/env-read" ]]; then
+  printf 'watchdog reread the dotenv file despite inherited systemd environment\n' >&2
   exit 1
 fi
 

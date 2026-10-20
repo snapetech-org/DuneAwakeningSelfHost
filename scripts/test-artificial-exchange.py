@@ -25,6 +25,15 @@ research = load_script("research_exchange_prices_under_test", "scripts/research-
 dune_exchange_import = load_script("import_dune_exchange_prices_under_test", "scripts/import-dune-exchange-prices.py")
 
 
+class ArtificialExchangeEnvironmentTest(unittest.TestCase):
+    def test_dotenv_file_reads_can_be_disabled_for_systemd_environment(self):
+        with mock.patch.dict(bot.os.environ, {"DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE": "true"}):
+            self.assertFalse(bot.should_read_env_files())
+
+        with mock.patch.dict(bot.os.environ, {"DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE": "0"}):
+            self.assertTrue(bot.should_read_env_files())
+
+
 class ArtificialExchangeCatalogTest(unittest.TestCase):
     def write_csv(self, path, rows):
         with path.open("w", newline="", encoding="utf-8") as fh:
