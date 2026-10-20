@@ -45,6 +45,16 @@ if ! grep -q '^Environment=PYTHONUNBUFFERED=1$' "$unit_file"; then
   exit 1
 fi
 
+if ! grep -q '^StartLimitIntervalSec=10min$' "$unit_file" || ! grep -q '^StartLimitBurst=3$' "$unit_file"; then
+  printf 'rendered buyer unit does not cap repeated start failures\n' >&2
+  exit 1
+fi
+
+if ! grep -q '^RestartSec=60s$' "$unit_file"; then
+  printf 'rendered buyer unit does not back off after failure\n' >&2
+  exit 1
+fi
+
 "$repo_root/scripts/install-artificial-exchange-service.sh" "$env_file" "$unit_file" populator >/dev/null
 if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-bot.py --populate-loop --expire-seeded$" "$unit_file"; then
   printf 'rendered populator unit did not use populate loop with seeded cleanup\n' >&2

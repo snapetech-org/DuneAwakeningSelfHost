@@ -432,9 +432,13 @@ Read surfaces:
 - `dune.items`
 - `dune.inventories`
 - `dune.player_state`
-- `dune.player_virtual_currency_balances`
-- `dune.get_solaris_id()`
+- `dune.player_virtual_currency_balances`, whose `currency_id` is the
+  `dune.virtualwallettype` enum (`Solaris`, `HouseCredit`)
 - Exchange function signatures from `pg_proc`
+
+Use the typed enum literal `'Solaris'::dune.virtualwallettype` when selecting
+or creating the player's Solaris bank-balance row. The old
+`dune.get_solaris_id()` helper is absent from current database schemas.
 
 Native write functions used:
 

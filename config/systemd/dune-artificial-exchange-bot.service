@@ -4,6 +4,8 @@ Documentation=file:///opt/DuneAwakeningSelfHost/docs/artificial-exchange.md
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
+StartLimitIntervalSec=10min
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -13,7 +15,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/opt/DuneAwakeningSelfHost/scripts/build-exchange-catalog.py
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/artificial-exchange-bot.py --loop
 Restart=always
-RestartSec=15
+RestartSec=60s
 
 [Install]
 WantedBy=multi-user.target

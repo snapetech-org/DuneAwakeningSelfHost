@@ -2059,7 +2059,7 @@ def settlement_report(conn, limit):
             left join dune.player_state ps on ps.player_controller_id = o.owner_id
             left join dune.player_virtual_currency_balances b
               on b.player_controller_id = o.owner_id
-             and b.currency_id = dune.get_solaris_id()
+             and b.currency_id = 'Solaris'::dune.virtualwallettype
             order by o.id desc
             limit %s
             """,
@@ -2106,7 +2106,7 @@ def credit_solaris_bank(cur, controller_id, amount, owner_id=None):
     cur.execute(
         """
         insert into dune.player_virtual_currency_balances(player_controller_id, currency_id, balance)
-        values(%s, dune.get_solaris_id(), 0)
+        values(%s, 'Solaris'::dune.virtualwallettype, 0)
         on conflict (player_controller_id, currency_id) do nothing
         """,
         (controller_id,),
@@ -2115,7 +2115,7 @@ def credit_solaris_bank(cur, controller_id, amount, owner_id=None):
         """
         select balance
         from dune.player_virtual_currency_balances
-        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        where player_controller_id=%s and currency_id='Solaris'::dune.virtualwallettype
         for update
         """,
         (controller_id,),
@@ -2129,7 +2129,7 @@ def credit_solaris_bank(cur, controller_id, amount, owner_id=None):
         """
         update dune.player_virtual_currency_balances
         set balance = balance + %s
-        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        where player_controller_id=%s and currency_id='Solaris'::dune.virtualwallettype
         returning balance
         """,
         (amount, controller_id),
@@ -2161,7 +2161,7 @@ def credit_solaris_bank(cur, controller_id, amount, owner_id=None):
         """
         select balance
         from dune.player_virtual_currency_balances
-        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        where player_controller_id=%s and currency_id='Solaris'::dune.virtualwallettype
         """,
         (controller_id,),
     )
