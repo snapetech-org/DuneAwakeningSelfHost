@@ -21,25 +21,22 @@ value_for() {
 }
 
 case "$1" in
-  compose)
+  ps)
     shift
     service=
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        ps)
+        --filter)
           shift
-          if [[ "$1" == "-q" ]]; then
-            shift
-            service="$1"
-            [[ "$(value_for "$service")" == "running" ]] && printf 'fake-%s\n' "$service"
-            exit 0
-          fi
+          [[ "$1" == label=com.docker.compose.service=* ]] && service="${1##*=}"
+          shift
           ;;
         *)
           shift
           ;;
       esac
     done
+    [[ "$(value_for "$service")" == "running" ]] && printf 'fake-%s\n' "$service"
     exit 0
     ;;
   inspect)
@@ -81,6 +78,7 @@ run_check() {
   CONTAINER_RUNTIME="$fake_runtime" \
   FAKE_STATUS_FILE="$status_file" \
   COMPOSE_FILES=compose.yaml \
+  COMPOSE_PROJECT_NAME=dune_server \
     "$repo_root/scripts/control-plane-health.sh" "$env_file" --quiet "$@" \
     >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"
   last_rc=$?

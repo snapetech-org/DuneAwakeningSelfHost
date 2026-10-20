@@ -59,19 +59,10 @@ if [[ ! -f "$env_file" ]]; then
   exit 1
 fi
 
-if [[ -x "$script_dir/compose-files.sh" ]]; then
+if [[ -z "${COMPOSE_FILES:-}" && -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
   export COMPOSE_FILES
 fi
-
-compose=("$runtime" compose)
-compose_files="$(printenv COMPOSE_FILES 2>/dev/null || true)"
-[[ -n "$compose_files" ]] || compose_files=compose.yaml:compose.allmaps.yaml
-IFS=':' read -ra compose_file_array <<< "$compose_files"
-for compose_file in "${compose_file_array[@]}"; do
-  [[ -n "$compose_file" ]] && compose+=(-f "$compose_file")
-done
-compose+=(--env-file "$env_file")
 
 read_env() {
   local key="$1" value
@@ -117,7 +108,10 @@ probe_services="$(env_or_file DUNE_CONTROL_PLANE_PROBE_SERVICES)"
 [[ -n "$probe_services" ]] || probe_services=survival,deep-desert,deep-desert-pvp
 
 compose_ps_q() {
-  "${compose[@]}" ps -q "$1" 2>/dev/null | head -1
+  "$runtime" ps -q \
+    --filter status=running \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-dune_server}" \
+    --filter "label=com.docker.compose.service=$1" 2>/dev/null | head -1
 }
 
 container_running() {

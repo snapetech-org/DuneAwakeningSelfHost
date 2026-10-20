@@ -48,6 +48,24 @@ lock_file="$(setting DUNE_DIRECTOR_WATCHDOG_LOCK_FILE)"
 lock_file="${lock_file:-/tmp/dune-director-watchdog.lock}"
 runtime="$(printenv CONTAINER_RUNTIME 2>/dev/null || printf docker)"
 
+# Child health probes run repeatedly. Resolve only their non-secret settings
+# once here so they do not reopen the credential-bearing Compose dotenv file
+# on every probe.
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(setting COMPOSE_PROJECT_NAME)}"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-dune_server}"
+DUNE_CONTROL_PLANE_REPAIR_TIMEOUT_SECONDS="${DUNE_CONTROL_PLANE_REPAIR_TIMEOUT_SECONDS:-$(setting DUNE_CONTROL_PLANE_REPAIR_TIMEOUT_SECONDS)}"
+export DUNE_CONTROL_PLANE_REPAIR_TIMEOUT_SECONDS="${DUNE_CONTROL_PLANE_REPAIR_TIMEOUT_SECONDS:-90}"
+DUNE_CONTROL_PLANE_DB_HOST="${DUNE_CONTROL_PLANE_DB_HOST:-$(setting DUNE_CONTROL_PLANE_DB_HOST)}"
+export DUNE_CONTROL_PLANE_DB_HOST="${DUNE_CONTROL_PLANE_DB_HOST:-postgres}"
+DUNE_CONTROL_PLANE_DB_PORT="${DUNE_CONTROL_PLANE_DB_PORT:-$(setting DUNE_CONTROL_PLANE_DB_PORT)}"
+export DUNE_CONTROL_PLANE_DB_PORT="${DUNE_CONTROL_PLANE_DB_PORT:-5432}"
+DUNE_CONTROL_PLANE_DB_USER="${DUNE_CONTROL_PLANE_DB_USER:-$(setting DUNE_CONTROL_PLANE_DB_USER)}"
+export DUNE_CONTROL_PLANE_DB_USER="${DUNE_CONTROL_PLANE_DB_USER:-dune}"
+DUNE_CONTROL_PLANE_PROBE_SERVICES="${DUNE_CONTROL_PLANE_PROBE_SERVICES:-$(setting DUNE_CONTROL_PLANE_PROBE_SERVICES)}"
+export DUNE_CONTROL_PLANE_PROBE_SERVICES="${DUNE_CONTROL_PLANE_PROBE_SERVICES:-survival,deep-desert,deep-desert-pvp}"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-$(setting POSTGRES_CONTAINER)}"
+export POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-dune_server-postgres-1}"
+
 if [[ ! "$interval" =~ ^[1-9][0-9]*$ || ! "$publication_interval" =~ ^[1-9][0-9]*$ \
     || ! "$publication_failure_threshold" =~ ^[1-9][0-9]*$ \
     || ! "$recovery_cooldown" =~ ^[0-9]+$ || ! "$recovery_timeout" =~ ^[1-9][0-9]*$ ]]; then
