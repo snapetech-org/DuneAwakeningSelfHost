@@ -37,6 +37,9 @@ python3 scripts/artificial-exchange-bot.py --settlement-report
 make artificial-exchange-smoke
 ```
 
+`--check-ready` exits nonzero when any required readiness gate fails. The buyer
+watchdog uses this status before restarting an inactive live service.
+
 Only after that flow is clean should an operator enable live purchase,
 auto-claim, funding, or populator apply gates in `.env`.
 

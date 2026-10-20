@@ -2912,7 +2912,10 @@ def main():
         print(json.dumps(stats_library_report(args, catalog), indent=2, default=str))
         return
     if args.check_ready:
-        print(json.dumps(readiness_check(args), indent=2, default=str))
+        result = readiness_check(args)
+        print(json.dumps(result, indent=2, default=str))
+        if not result["ok"]:
+            raise SystemExit(1)
         return
     if args.claim_settlement is not None:
         print(json.dumps(claim_settlement_once(args), indent=2, default=str))

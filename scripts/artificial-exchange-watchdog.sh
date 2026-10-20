@@ -68,6 +68,14 @@ check_unit() {
   enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
   active="$(systemctl is-active "$unit" 2>/dev/null || true)"
 
+  if [[ "$label" == buyer && "$should_run" == true && "$active" != active ]]; then
+    if ! "$repo_root/scripts/artificial-exchange-bot.py" --check-ready >/dev/null 2>&1; then
+      printf '{"label":"%s","unit":"%s","configured":true,"enabled":"%s","active":"%s","installed":false,"started":false,"readinessBlocked":true}' \
+        "$label" "$unit" "$enabled" "$active"
+      return 0
+    fi
+  fi
+
   if [[ "$should_run" == true && "$enabled" != enabled ]]; then
     if [[ "$(json_bool "$dry_run")" == false ]]; then
       install_known_unit "$label" "$unit" || true
