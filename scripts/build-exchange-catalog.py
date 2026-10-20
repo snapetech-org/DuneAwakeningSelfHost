@@ -52,9 +52,19 @@ def read_env_file(path):
     return values
 
 
+def should_read_env_files():
+    return os.environ.get("DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 FILE_ENV = {}
-for env_path in ("/workspace/.env", ROOT / ".env"):
-    FILE_ENV.update(read_env_file(env_path))
+if should_read_env_files():
+    for env_path in ("/workspace/.env", ROOT / ".env"):
+        FILE_ENV.update(read_env_file(env_path))
 
 
 def env(name, default=""):

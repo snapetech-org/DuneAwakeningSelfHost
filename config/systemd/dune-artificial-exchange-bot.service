@@ -12,6 +12,7 @@ Type=simple
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
 Environment=PYTHONUNBUFFERED=1
+Environment=DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true
 ExecStartPre=/opt/DuneAwakeningSelfHost/scripts/build-exchange-catalog.py
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/artificial-exchange-bot.py --loop
 Restart=always

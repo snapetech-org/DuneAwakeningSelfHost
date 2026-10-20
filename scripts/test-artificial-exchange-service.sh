@@ -35,8 +35,13 @@ if ! grep -q "^ExecStartPre=$repo_root/scripts/build-exchange-catalog.py$" "$uni
   exit 1
 fi
 
-if grep -q '^Environment=DUNE_ARTIFICIAL_EXCHANGE_' "$unit_file"; then
+if grep -E '^Environment=DUNE_ARTIFICIAL_EXCHANGE_' "$unit_file" | grep -v '^Environment=DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true$' >/dev/null; then
   printf 'rendered unit hardcodes artificial Exchange gates instead of using env file\n' >&2
+  exit 1
+fi
+
+if ! grep -q '^Environment=DUNE_ARTIFICIAL_EXCHANGE_SKIP_DOTENV_FILE=true$' "$unit_file"; then
+  printf 'rendered unit does not avoid rereading the dotenv file\n' >&2
   exit 1
 fi
 
