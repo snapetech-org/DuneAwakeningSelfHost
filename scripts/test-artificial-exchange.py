@@ -35,6 +35,22 @@ class ArtificialExchangeEnvironmentTest(unittest.TestCase):
             self.assertTrue(bot.should_read_env_files())
             self.assertTrue(catalog.should_read_env_files())
 
+    def test_seeded_stats_owner_filter_uses_bound_parameters(self):
+        for owner_id in (0, 124):
+            with self.subTest(owner_id=owner_id):
+                conn = mock.MagicMock()
+                cursor = conn.cursor.return_value.__enter__.return_value
+                cursor.fetchall.return_value = []
+                args = types.SimpleNamespace(exchange_id=2, populator_owner_id=owner_id, limit=50, report_skips=3)
+
+                bot.audit_seeded_stats(conn, args, {})
+
+                query, params = cursor.execute.call_args.args
+                self.assertIn("and (%s <= 0 or o.owner_id=%s)", query)
+                if owner_id > 0:
+                    self.assertNotIn(str(owner_id), query)
+                self.assertEqual(params, (2, owner_id, owner_id, 50))
+
 
 class ArtificialExchangeCatalogTest(unittest.TestCase):
     def write_csv(self, path, rows):

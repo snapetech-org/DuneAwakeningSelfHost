@@ -961,29 +961,24 @@ def fetch_seeded_orders(conn, exchange_id, owner_id, limit):
 
 
 def audit_seeded_stats(conn, args, catalog):
-    owner_filter = "and o.owner_id=%s" if args.populator_owner_id > 0 else ""
-    params = [args.exchange_id]
-    if args.populator_owner_id > 0:
-        params.append(args.populator_owner_id)
-    params.append(args.limit)
     with conn.cursor() as cur:
         cur.execute(
-            f"""
+            """
             select
                 o.id, o.owner_id, o.template_id, o.item_price, o.quality_level as order_quality_level,
                 i.id as item_id, i.quality_level as item_quality_level, i.stack_size,
-                coalesce(i.stats, '{{}}'::jsonb) = '{{}}'::jsonb as empty_stats,
+                coalesce(i.stats, '{}'::jsonb) = '{}'::jsonb as empty_stats,
                 o.category_mask, o.category_depth
             from dune.dune_exchange_orders o
             left join dune.items i on i.id=o.item_id
             where o.exchange_id=%s
               and o.is_npc_order=true
               and o.item_id is not null
-              {owner_filter}
+              and (%s <= 0 or o.owner_id=%s)
             order by o.id desc
             limit %s
             """,
-            tuple(params),
+            (args.exchange_id, args.populator_owner_id, args.populator_owner_id, args.limit),
         )
         rows = [dict(row) for row in cur.fetchall()]
 
