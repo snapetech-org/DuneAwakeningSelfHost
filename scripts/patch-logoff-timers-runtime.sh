@@ -8,8 +8,21 @@ AUTO_REMAP_ENABLED="${DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED:-true}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
 TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
 DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-false}"
+BACKEND_ONLY="${DUNE_LOGOFF_TIMER_BACKEND_ONLY:-false}"
 
 case "$EXPECTED_BUILD_ID" in
+  50d73d6403583bbcad919119c08d5083181c4d51)
+    DEFAULT_VALUE_A_OFFSET="0x1731ebf0"
+    DEFAULT_VALUE_B_OFFSET="0x1731ec08"
+    DEFAULT_DEADLINE_CLAMP_OFFSET="0x0da907d4"
+    DEFAULT_TIMER_DURATION_ZERO_OFFSET="0x0da90be1"
+    DEFAULT_UI_VALUE_A_OFFSET=""
+    DEFAULT_UI_VALUE_B_OFFSET=""
+    DEFAULT_UI_VALUE_C_OFFSET=""
+    DEFAULT_DIALOG_TRIPLE_OFFSET=""
+    DIRECT_ARRAYS="false"
+    BACKEND_ONLY="true"
+    ;;
   9bf5fbdef43a6d6d64459df973f3d252c01ab4ad)
     DEFAULT_VALUE_A_OFFSET="0x16521698"
     DEFAULT_VALUE_B_OFFSET="0x165216b0"
@@ -142,6 +155,7 @@ env_command=(
   "TARGET_CONTAINERS='$TARGET_CONTAINERS'"
   "AUTO_REMAP_ENABLED='$AUTO_REMAP_ENABLED'"
   "DIRECT_ARRAYS='$DIRECT_ARRAYS'"
+  "BACKEND_ONLY='$BACKEND_ONLY'"
   "MODE='$MODE'"
   "bash -s"
 )
@@ -159,6 +173,7 @@ local_env=(
   "TARGET_CONTAINERS=$TARGET_CONTAINERS"
   "AUTO_REMAP_ENABLED=$AUTO_REMAP_ENABLED"
   "DIRECT_ARRAYS=$DIRECT_ARRAYS"
+  "BACKEND_ONLY=$BACKEND_ONLY"
   "MODE=$MODE"
 )
 
@@ -171,11 +186,34 @@ fi
 "${runner[@]}" <<'REMOTE'
 set -euo pipefail
 
+has_sys_ptrace_capability() {
+  local cap_eff
+  cap_eff="$(awk '$1 == "CapEff:" {print $2; exit}' /proc/self/status 2>/dev/null || true)"
+  [[ "$cap_eff" =~ ^[[:xdigit:]]+$ ]] || return 1
+  (( (16#$cap_eff & 524288) != 0 ))
+}
+
+sudo() {
+  if [[ "${1:-}" == "-n" ]] && has_sys_ptrace_capability; then
+    shift
+    "$@"
+  else
+    command sudo "$@"
+  fi
+}
+
 truthy() {
   [[ "${1:-}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]
 }
 
 offsets_complete() {
+  if truthy "${BACKEND_ONLY:-false}"; then
+    [[ -n "${VALUE_A_OFFSET:-}" &&
+       -n "${VALUE_B_OFFSET:-}" &&
+       -n "${DEADLINE_CLAMP_OFFSET:-}" &&
+       -n "${TIMER_DURATION_ZERO_OFFSET:-}" ]]
+    return
+  fi
   [[ -n "${VALUE_A_OFFSET:-}" &&
      -n "${VALUE_B_OFFSET:-}" &&
      -n "${UI_VALUE_A_OFFSET:-}" &&
@@ -299,6 +337,58 @@ while True:
 
     search_at = idx + 1
 
+def accessor_leas(accessor_va):
+    accessor_off = va_to_file_offset(accessor_va)
+    if accessor_off is None:
+        return []
+    accessor = data[accessor_off:accessor_off + 0x90]
+    for lea_rip in lea_rip_encodings:
+        found = []
+        lea_at = 0
+        while True:
+            lea_rel = accessor.find(lea_rip, lea_at)
+            if lea_rel < 0:
+                break
+            found.append(rip_target(accessor_va + lea_rel, 7, s32(accessor[lea_rel + 3:lea_rel + 7])))
+            lea_at = lea_rel + 1
+        if len(found) >= 2:
+            return found
+    return []
+
+if not backend_candidates:
+    # The function prologue drifted. Anchor on the deadline clamp and the
+    # duration reload instead, then walk back to the accessor call that
+    # returns the two timer-array globals.
+    anchored = {}
+    at = 0
+    while True:
+        anchor = text_bytes.find(deadline_context, at)
+        if anchor < 0:
+            break
+        at = anchor + 1
+        ahead = text_bytes[anchor:anchor + 0x800]
+        duration_rels = [m.start() for m in re.finditer(re.escape(duration_reload), ahead)]
+        if not duration_rels:
+            continue
+        for call_off in range(anchor - 1, max(0, anchor - 0x100), -1):
+            if text_bytes[call_off] != 0xE8:
+                continue
+            call_rel = s32(text_bytes[call_off + 1:call_off + 5])
+            leas = accessor_leas(text_va + call_off + 5 + call_rel)
+            # The two timer-array globals are adjacent; this rejects 0xE8 bytes
+            # that are really operand data.
+            if leas and 0 < abs(leas[0] - leas[1]) <= 0x100:
+                anchored[anchor] = {
+                    "value_a": leas[1],
+                    "value_b": leas[0],
+                    "deadline": text_va + anchor + 5,
+                    "duration": text_va + anchor + duration_rels[-1],
+                }
+                break
+    backend_candidates = list(anchored.values())
+    if backend_candidates:
+        print("note: backend timer found by anchor scan; function prologue drifted", file=sys.stderr)
+
 if len(backend_candidates) != 1:
     raise SystemExit(f"expected one backend timer candidate, found {len(backend_candidates)}")
 
@@ -340,18 +430,28 @@ while True:
 
     search_at = idx + 1
 
-if len(ui_candidates) != 1:
-    raise SystemExit(f"expected one UI timer candidate, found {len(ui_candidates)}")
-
 backend = backend_candidates[0]
-ui = ui_candidates[0]
+if len(ui_candidates) == 1:
+    ui = ui_candidates[0]
+else:
+    # Client-visible timer globals are optional; the server-side countdown is
+    # enforced by the backend pair. Patch backend-only rather than leaving the
+    # build entirely unpatched.
+    print(f"note: expected one UI timer candidate, found {len(ui_candidates)}; remapping backend-only", file=sys.stderr)
+    ui = None
 print(f"VALUE_A_OFFSET=0x{backend['value_a']:x}")
 print(f"VALUE_B_OFFSET=0x{backend['value_b']:x}")
 print(f"DEADLINE_CLAMP_OFFSET=0x{backend['deadline']:x}")
 print(f"TIMER_DURATION_ZERO_OFFSET=0x{backend['duration']:x}")
-print(f"UI_VALUE_A_OFFSET=0x{ui['ui_a']:x}")
-print(f"UI_VALUE_B_OFFSET=0x{ui['ui_b']:x}")
-print(f"UI_VALUE_C_OFFSET=0x{ui['ui_c']:x}")
+if ui:
+    print(f"UI_VALUE_A_OFFSET=0x{ui['ui_a']:x}")
+    print(f"UI_VALUE_B_OFFSET=0x{ui['ui_b']:x}")
+    print(f"UI_VALUE_C_OFFSET=0x{ui['ui_c']:x}")
+else:
+    print("UI_VALUE_A_OFFSET=''")
+    print("UI_VALUE_B_OFFSET=''")
+    print("UI_VALUE_C_OFFSET=''")
+    print("BACKEND_ONLY=true")
 PY
 }
 
@@ -362,6 +462,34 @@ resolve_offsets_for_build() {
   local remap_output
 
   case "$build_id" in
+    50d73d6403583bbcad919119c08d5083181c4d51)
+      VALUE_A_OFFSET="0x1731ebf0"
+      VALUE_B_OFFSET="0x1731ec08"
+      DEADLINE_CLAMP_OFFSET="0x0da907d4"
+      TIMER_DURATION_ZERO_OFFSET="0x0da90be1"
+      UI_VALUE_A_OFFSET=""
+      UI_VALUE_B_OFFSET=""
+      UI_VALUE_C_OFFSET=""
+      DIALOG_TRIPLE_OFFSET=""
+      DIRECT_ARRAYS="false"
+      BACKEND_ONLY="true"
+      EXPECTED_BUILD_ID="$build_id"
+      return
+      ;;
+    39e7aabe1c6201e43b81254e1c54631f8f16c8df)
+      VALUE_A_OFFSET="0x173089f0"
+      VALUE_B_OFFSET="0x17308a08"
+      DEADLINE_CLAMP_OFFSET="0x0da84274"
+      TIMER_DURATION_ZERO_OFFSET="0x0da84681"
+      UI_VALUE_A_OFFSET=""
+      UI_VALUE_B_OFFSET=""
+      UI_VALUE_C_OFFSET=""
+      DIALOG_TRIPLE_OFFSET=""
+      DIRECT_ARRAYS="false"
+      BACKEND_ONLY="true"
+      EXPECTED_BUILD_ID="$build_id"
+      return
+      ;;
     cde875918e7dee23366c71e0d7bc20237810ea92)
       VALUE_A_OFFSET="0x165a7488"
       VALUE_B_OFFSET="0x165a74a0"
@@ -370,6 +498,19 @@ resolve_offsets_for_build() {
       UI_VALUE_A_OFFSET="0x165a91d8"
       UI_VALUE_B_OFFSET="0x165a9a78"
       UI_VALUE_C_OFFSET="0x165a9aa8"
+      DIALOG_TRIPLE_OFFSET=""
+      DIRECT_ARRAYS="false"
+      EXPECTED_BUILD_ID="$build_id"
+      return
+      ;;
+    1d03e11f7a9161d3755e3aec4cbda3eb924193ae)
+      VALUE_A_OFFSET="0x172fed50"
+      VALUE_B_OFFSET="0x172fed68"
+      DEADLINE_CLAMP_OFFSET="0xda7dac4"
+      TIMER_DURATION_ZERO_OFFSET="0xda7ded1"
+      UI_VALUE_A_OFFSET="0x174eef00"
+      UI_VALUE_B_OFFSET="0x174eef18"
+      UI_VALUE_C_OFFSET="0x174eef30"
       DIALOG_TRIPLE_OFFSET=""
       DIRECT_ARRAYS="false"
       EXPECTED_BUILD_ID="$build_id"
@@ -431,6 +572,66 @@ validate_patch_targets() {
   local p10 p11 p12 p13 p20 p21 p22 p23
   local u10 u11 u12 u13 u20 u21 u22 u23 u30 u31 u32 u33
   local c0 c1 c2 d0 d1 d2 d3 d4
+
+  if truthy "${BACKEND_ONLY:-false}"; then
+    validation_output="$(
+      sudo -n gdb -q -batch -p "$pid" \
+        -ex "set confirm off" \
+        -ex "set pagination off" \
+        -ex "set \$p1 = *(void**)$addr_a" \
+        -ex "set \$p2 = *(void**)$addr_b" \
+        -ex "printf \"LOGOFF_BACKEND_PTR %p %p\\n\", \$p1, \$p2" \
+        -ex "printf \"LOGOFF_BACKEND_FLOATS %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)\$p1, *(float*)((char*)\$p1 + 4), *(float*)((char*)\$p1 + 8), *(float*)((char*)\$p1 + 12), *(float*)\$p2, *(float*)((char*)\$p2 + 4), *(float*)((char*)\$p2 + 8), *(float*)((char*)\$p2 + 12)" \
+        -ex "set \$clamp = (unsigned char*)$addr_clamp" \
+        -ex "set \$duration = (unsigned char*)$addr_duration_zero" \
+        -ex "printf \"LOGOFF_BYTES %02x %02x %02x %02x %02x %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2], \$duration[0], \$duration[1], \$duration[2], \$duration[3], \$duration[4]"
+    )"
+    ptr_line="$(awk '/^LOGOFF_BACKEND_PTR / {line=$0} END {print line}' <<< "$validation_output")"
+    float_line="$(awk '/^LOGOFF_BACKEND_FLOATS / {line=$0} END {print line}' <<< "$validation_output")"
+    byte_line="$(awk '/^LOGOFF_BYTES / {line=$0} END {print line}' <<< "$validation_output")"
+    if [[ -z "$ptr_line" || -z "$float_line" || -z "$byte_line" ]]; then
+      printf 'invalid backend-only logoff timer validation output\n%s\n' "$validation_output" >&2
+      return 1
+    fi
+    read -r _ p1 p2 <<< "$ptr_line"
+    if [[ "$p1" == "(nil)" || "$p1" == "0x0" || "$p2" == "(nil)" || "$p2" == "0x0" ]]; then
+      printf 'invalid backend logoff timer pointers: %s %s\n' "$p1" "$p2" >&2
+      return 1
+    fi
+    read -r _ p10 p11 p12 p13 p20 p21 p22 p23 <<< "$float_line"
+    read -r _ c0 c1 c2 d0 d1 d2 d3 d4 <<< "$byte_line"
+    float_close() {
+      awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; if (d < 0) d = -d; exit(d <= 0.001 ? 0 : 1) }'
+    }
+    float_allowed() {
+      local value="$1"
+      shift
+      local allowed
+      for allowed in "$@"; do
+        if float_close "$value" "$allowed"; then return 0; fi
+      done
+      return 1
+    }
+    for value in "$p10" "$p11"; do
+      float_allowed "$value" "$TARGET_VALUE" 0 30 || { printf 'invalid backend 30-second timer value: %s\n' "$value" >&2; return 1; }
+    done
+    for value in "$p12" "$p13" "$p22" "$p23"; do
+      float_allowed "$value" 0 || { printf 'invalid backend timer tail: %s\n' "$value" >&2; return 1; }
+    done
+    for value in "$p20" "$p21"; do
+      float_allowed "$value" "$TARGET_VALUE" 0 300 || { printf 'invalid backend 300-second timer value: %s\n' "$value" >&2; return 1; }
+    done
+    if [[ "$c0" != "48" || "$c2" != "c1" || ( "$c1" != "01" && "$c1" != "89" ) ]]; then
+      printf 'invalid deadline clamp bytes: %s %s %s\n' "$c0" "$c1" "$c2" >&2
+      return 1
+    fi
+    if [[ ! ( "$d0" == "c5" && "$d1" == "fa" && "$d2" == "10" && "$d3" == "45" && "$d4" == "d4" ) &&
+          ! ( "$d0" == "c5" && "$d1" == "f8" && "$d2" == "57" && "$d3" == "c0" && "$d4" == "90" ) ]]; then
+      printf 'invalid timer duration bytes: %s %s %s %s %s\n' "$d0" "$d1" "$d2" "$d3" "$d4" >&2
+      return 1
+    fi
+    return 0
+  fi
 
   if truthy "${DIRECT_ARRAYS:-false}"; then
     validation_output="$(
@@ -658,18 +859,66 @@ for container in "${containers[@]}"; do
   if [[ -n "${TIMER_DURATION_ZERO_OFFSET:-}" ]]; then
     addr_duration_zero="$(printf '0x%x' $((base + TIMER_DURATION_ZERO_OFFSET)))"
   fi
-  addr_ui_a="$(printf '0x%x' $((base + UI_VALUE_A_OFFSET)))"
-  addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"
-  addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"
+  addr_ui_a=""
+  addr_ui_b=""
+  addr_ui_c=""
+  if [[ -n "${UI_VALUE_A_OFFSET:-}" ]]; then addr_ui_a="$(printf '0x%x' $((base + UI_VALUE_A_OFFSET)))"; fi
+  if [[ -n "${UI_VALUE_B_OFFSET:-}" ]]; then addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"; fi
+  if [[ -n "${UI_VALUE_C_OFFSET:-}" ]]; then addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"; fi
   addr_dialog=""
   if [[ -n "${DIALOG_TRIPLE_OFFSET:-}" ]]; then
     addr_dialog="$(printf '0x%x' $((base + DIALOG_TRIPLE_OFFSET)))"
   fi
-  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c dialog_triple=${addr_dialog:-none} clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+  if truthy "${BACKEND_ONLY:-false}"; then
+    echo "$container: pid=$pid base=$base backend_pointers=$addr_a,$addr_b ui=not-targeted clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+  else
+    echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c dialog_triple=${addr_dialog:-none} clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+  fi
 
   validate_patch_targets "$pid" "$addr_a" "$addr_b" "$addr_ui_a" "$addr_ui_b" "$addr_ui_c" "$addr_clamp" "$addr_duration_zero"
 
-  if [[ "$MODE" == "dry-run" && "${DIRECT_ARRAYS:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
+  if truthy "${BACKEND_ONLY:-false}" && [[ "$MODE" == "dry-run" ]]; then
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "set \$p1 = *(void**)$addr_a" \
+      -ex "set \$p2 = *(void**)$addr_b" \
+      -ex "printf \"backend arrays before p1=%p p2=%p\\n\", \$p1, \$p2" \
+      -ex "x/4fw \$p1" \
+      -ex "x/4fw \$p2" \
+      -ex "printf \"deadline clamp bytes: \"" \
+      -ex "x/3xb $addr_clamp" \
+      -ex "printf \"timer duration bytes: \"" \
+      -ex "x/5xb $addr_duration_zero"
+  elif truthy "${BACKEND_ONLY:-false}"; then
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "set \$p1 = *(void**)$addr_a" \
+      -ex "set \$p2 = *(void**)$addr_b" \
+      -ex "printf \"backend arrays before p1=%p p2=%p\\n\", \$p1, \$p2" \
+      -ex "x/4fw \$p1" \
+      -ex "x/4fw \$p2" \
+      -ex "set {float}\$p1 = $TARGET_VALUE" \
+      -ex "set {float}((char*)\$p1 + 4) = $TARGET_VALUE" \
+      -ex "set {float}\$p2 = $TARGET_VALUE" \
+      -ex "set {float}((char*)\$p2 + 4) = $TARGET_VALUE" \
+      -ex "set \$clamp = (unsigned char*)$addr_clamp" \
+      -ex "printf \"deadline clamp before: %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2]" \
+      -ex "set \$clamp[1] = 0x89" \
+      -ex "set \$duration = (unsigned char*)$addr_duration_zero" \
+      -ex "printf \"timer duration before: %02x %02x %02x %02x %02x\\n\", \$duration[0], \$duration[1], \$duration[2], \$duration[3], \$duration[4]" \
+      -ex "set \$duration[0] = 0xc5" \
+      -ex "set \$duration[1] = 0xf8" \
+      -ex "set \$duration[2] = 0x57" \
+      -ex "set \$duration[3] = 0xc0" \
+      -ex "set \$duration[4] = 0x90" \
+      -ex "printf \"backend arrays after p1=%p p2=%p\\n\", \$p1, \$p2" \
+      -ex "x/4fw \$p1" \
+      -ex "x/4fw \$p2" \
+      -ex "printf \"deadline clamp bytes: \"" \
+      -ex "x/3xb $addr_clamp" \
+      -ex "printf \"timer duration bytes: \"" \
+      -ex "x/5xb $addr_duration_zero"
+  elif [[ "$MODE" == "dry-run" && "${DIRECT_ARRAYS:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
     sudo -n gdb -q -batch -p "$pid" \
       -ex "set pagination off" \
       -ex "printf \"direct arrays before p1=%p p2=%p\\n\", (void*)$addr_a, (void*)$addr_b" \

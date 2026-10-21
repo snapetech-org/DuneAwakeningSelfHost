@@ -347,6 +347,20 @@ printf '\nvalidating Landsraad/Coriolis guard before restart\n'
 printf '\nwriting pre-restart backup\n'
 ./scripts/backup-state.sh "$env_file"
 
+printf '\nchecking logoff timer auto-remap against the new server binary (offline)\n'
+remap_check_dir="$(mktemp -d)"
+remap_check_tag="$(grep -E '^DUNE_IMAGE_TAG=' "$env_file" | cut -d= -f2- | head -n1)"
+remap_check_cid="$(docker create "registry.funcom.com/funcom/self-hosting/seabass-server:$remap_check_tag" 2>/dev/null || true)"
+if [[ -n "$remap_check_cid" ]] \
+  && docker cp "$remap_check_cid:/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping" "$remap_check_dir/server" >/dev/null 2>&1 \
+  && ./scripts/test-logoff-timer-remap.sh "$remap_check_dir/server"; then
+  :
+else
+  printf 'warning: offline logoff timer remap check failed or was skipped; the runtime patch may not apply after restart\n' >&2
+fi
+[[ -n "$remap_check_cid" ]] && docker rm "$remap_check_cid" >/dev/null 2>&1 || true
+rm -rf "$remap_check_dir"
+
 if [[ "$restart" != "true" ]]; then
   printf '\nimage update complete; restart skipped by --no-restart\n'
   exit 0
@@ -375,7 +389,7 @@ printf '\nchecking FLS publication health\n'
 
 printf '\nchecking logoff timer runtime patch state\n'
 if ! ./scripts/patch-logoff-timers-runtime.sh --local --dry-run; then
-  printf 'warning: logoff timer dry-run failed after auto-remap/validation; inspect the new build manually before applying\n' >&2
+  printf 'warning: logoff timer dry-run failed after auto-remap/validation; inspect the new build manually before applying (offline check: scripts/test-logoff-timer-remap.sh)\n' >&2
 fi
 
 printf '\nupdate and restart flow complete\n'

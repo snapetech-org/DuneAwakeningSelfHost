@@ -366,6 +366,17 @@ with:
 ```
 
 The dry run must show the target containers' logoff timer arrays as `0 0 0 0`.
+
+After a Funcom update the patch offsets are re-derived from the running binary
+(`DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED`, default true). The remap finds the
+backend timer by its function prologue and, if that drifts, by an anchor scan on
+the deadline clamp and duration reload. If the client-visible UI timer globals
+cannot be found it patches backend-only instead of leaving the build unpatched.
+`scripts/update-owned-steam-build-and-restart.sh` runs
+`scripts/test-logoff-timer-remap.sh` against the new server binary before the
+restart; run it by hand on any extracted `DuneSandboxServer-Linux-Shipping`.
+The runtime patch is in-memory, so it is reapplied by the post-start hooks after
+every map start.
 On 2026-06-02, DD1 lost instant logout because it was manually recreated without
 that post-start step; the process came back with `30`/`300` second runtime
 timers despite correct INI values.
@@ -590,13 +601,12 @@ director heartbeat to FLS succeeds
 current_alive_active=31 active_servers=31 partitions=31
 ```
 
-Server-browser naming is split across the control plane based on the observed
-in-game browser. `config/gateway.ini` `[gateway].display_name` is the
-parent/top row and must stay the branded server title. `WORLD_NAME` and
-`DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the
-feature-list description. To refresh the server-browser rows without
-disconnecting existing map sessions, recreate only `gateway`, then reseed the
-gateway/Postgres bridge neighbor entries:
+The server-browser title appears in separate parent and nested rows.
+`config/gateway.ini` `[gateway].display_name`, `PUBLIC_SERVER_NAME`,
+`WORLD_NAME`, and `DUNE_SERVER_DISPLAY_NAME` must all contain the exact same
+approved title. To refresh the server-browser rows without disconnecting
+existing map sessions, recreate only `gateway`, then reseed the gateway/Postgres
+bridge neighbor entries:
 
 ```bash
 docker compose --env-file .env up -d --force-recreate --no-deps gateway
@@ -817,9 +827,11 @@ For the remote standby layout, use the snapshot helper instead of pulling dumps 
 ./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
-This keeps rolling dumps on the remote replica host. The installed timer runs as
-the installing local user by default so SSH uses that user's keys and host
-aliases. Use `DUNE_REPLICA_SNAPSHOT_USER` and
+This streams rolling dumps from the remote replica to the local
+`backups/replica-snapshots` path. The installed timer runs as the installing
+local user by default so SSH uses that user's keys and host aliases. The
+snapshot path is required before the timer runs, which lets it use the mounted
+backup filesystem. Use `DUNE_REPLICA_SNAPSHOT_USER` and
 `DUNE_REPLICA_SNAPSHOT_GROUP` only for a dedicated service account with working
 remote SSH credentials. Use it alongside daily offline full-state backups.
 
