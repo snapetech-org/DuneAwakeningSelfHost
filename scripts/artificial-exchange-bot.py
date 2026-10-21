@@ -15,6 +15,7 @@ import difflib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+from secret_env import read_secret_env
 from exchange_category_map import EXCHANGE_CATEGORY_MASKS
 from dune_whisper_route import whisper_route_for_fls_id
 
@@ -170,6 +171,12 @@ def env(name, default=""):
     return FILE_ENV.get(name, default)
 
 
+def secret_env(name, default=""):
+    if os.environ.get(f"{name}_FILE", "").strip():
+        return read_secret_env(name, default)
+    return env(name, default)
+
+
 def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
 
@@ -201,7 +208,7 @@ def connect_db():
         host=host,
         port=port,
         user=env("DUNE_ADMIN_DB_USER", "dune"),
-        password=env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", "")),
+        password=secret_env("DUNE_ADMIN_DB_PASSWORD") or secret_env("POSTGRES_DUNE_PASSWORD"),
         dbname=dbname,
         connect_timeout=5,
         cursor_factory=psycopg2.extras.RealDictCursor,

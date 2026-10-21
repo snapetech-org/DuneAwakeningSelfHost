@@ -10,6 +10,8 @@ import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from secret_env import read_secret_env
 
 
 def read_env(path):
@@ -151,7 +153,7 @@ def main_with_argv(argv=None):
 
     env_file = read_env(args.env_file)
     base = admin_base(args, env_file)
-    token = args.token or env("DUNE_ADMIN_TOKEN", "", env_file)
+    token = args.token or read_secret_env("DUNE_ADMIN_TOKEN", env_file.get("DUNE_ADMIN_TOKEN", ""))
 
     if args.action == "scan":
         result = scan_accounts(base, token, query=args.query, limit=args.limit)

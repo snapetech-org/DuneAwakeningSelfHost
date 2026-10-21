@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(CODE_ROOT / "admin"))
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
+from secret_env import read_secret_env, write_secret_file
 import blueprint_admin
 import augment_admin
 import addon_admin
@@ -234,20 +235,7 @@ DATABASE = (
     or os.environ.get("DUNE_DB_NAME")
     or "dune_sb_1_4_0_0"
 )
-
-
-def secret_env(name, default=""):
-    file_path = os.environ.get(f"{name}_FILE", "").strip()
-    if file_path:
-        try:
-            return pathlib.Path(file_path).read_text(encoding="utf-8").rstrip("\r\n")
-        except OSError as exc:
-            print(f"WARNING: {name}_FILE could not be read ({type(exc).__name__}); {name} is disabled", file=sys.stderr)
-            return ""
-    return os.environ.get(name, default)
-
-
-ADMIN_TOKEN = secret_env("DUNE_ADMIN_TOKEN")
+ADMIN_TOKEN = read_secret_env("DUNE_ADMIN_TOKEN")
 ADMIN_REQUIRE_TOKEN = os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "true").lower() in ("1", "true", "yes", "on")
 RBAC_ENABLED = os.environ.get("DUNE_ADMIN_RBAC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ADMIN_ACCESS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_ACCESS_FILE", str(CONFIG_ROOT / "admin-access.json")))
@@ -1434,7 +1422,7 @@ def feature_readiness_public_status(force=False, allow_stale=False):
             "detail": "required metrics collectors are running",
         },
         "native-actions": {
-            "ready": bool(GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and values.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN") and str((service_by_name.get("admin-rmq") or {}).get("state") or "").lower() == "running"),
+            "ready": bool(GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and read_secret_env("DUNE_SERVER_COMMANDS_AUTH_TOKEN") and str((service_by_name.get("admin-rmq") or {}).get("state") or "").lower() == "running"),
             "state": "ready" if GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED else "gated",
             "detail": "native command gates, private token, and admin-rmq transport checked",
         },
@@ -1445,8 +1433,8 @@ def feature_readiness_public_status(force=False, allow_stale=False):
         "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
         "creator-modding": _feature_readiness_probe("creator-modding", _feature_readiness_creator_probe),
         "discord-adapter": {
-            "ready": bool(DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN")),
-            "state": "ready" if DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN") else "credential-missing",
+            "ready": bool(DISCORD_ADAPTER_ENABLED and read_secret_env("DUNE_BOT_API_TOKEN")),
+            "state": "ready" if DISCORD_ADAPTER_ENABLED and read_secret_env("DUNE_BOT_API_TOKEN") else "credential-missing",
             "detail": "permissioned Admin adapter is loaded; Discord Gateway credentials are evaluated separately",
         },
         "federated-auth": {
@@ -2111,7 +2099,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_RESTART_STEAMCMD_HELPER_IMAGE": {"group": "Install", "secret": False, "restart": False, "why": "Container image used to run SteamCMD when the restart hook is operating through the Docker socket helper."},
     "DUNE_STEAM_APP_ID": {"group": "Install", "secret": False, "restart": False, "why": "Steam app id for the Dune: Awakening Self-Hosted Server tool."},
     "DUNE_STEAM_LOGIN": {"group": "Install", "secret": False, "restart": False, "why": "SteamCMD login name. Use anonymous if the tool allows anonymous updates."},
-    "DUNE_STEAM_PASSWORD": {"group": "Secrets", "secret": True, "restart": False, "why": "Optional SteamCMD password for non-anonymous tool updates."},
+    "DUNE_STEAM_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Optional SteamCMD password for non-anonymous tool updates."},
     "DUNE_STEAMCMD_COMMAND": {"group": "Install", "secret": False, "restart": False, "why": "SteamCMD executable name or absolute path for host-side maintenance updates."},
     "DUNE_STEAMCMD_VALIDATE": {"group": "Install", "secret": False, "restart": False, "why": "Adds validate to SteamCMD app_update during maintenance."},
     "DUNE_STEAMCMD_TIMEOUT_SECONDS": {"group": "Install", "secret": False, "restart": False, "why": "Maximum time allowed for SteamCMD package update before the restart hook fails or skips based on required mode."},
@@ -2445,7 +2433,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS": {"group": "Announcements", "secret": False, "restart": False, "why": "Short timeout for RabbitMQ management API probes before the hook falls back to Docker socket binding plus AMQP publish."},
     "DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH": {"group": "Announcements", "secret": False, "restart": False, "why": "Emergency fallback for RabbitMQ HTTP publish. Leave false; HTTP publish can route successfully while the Dune client renders nothing."},
     "DUNE_ANNOUNCE_CHAT_USER": {"group": "Announcements", "secret": False, "restart": False, "why": "Player-shaped RabbitMQ identity used as the in-game announcement sender."},
-    "DUNE_ANNOUNCE_CHAT_PASSWORD": {"group": "Announcements", "secret": True, "restart": False, "why": "Password supplied for the chat announcement sender."},
+    "DUNE_ANNOUNCE_CHAT_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "Password supplied for the chat announcement sender."},
     "DUNE_ANNOUNCE_CHAT_FUNCOM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Funcom id stamped onto restart chat messages."},
     "DUNE_ANNOUNCE_CHAT_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Display name used when spoofed chat names are enabled."},
     "DUNE_ANNOUNCE_CHAT_EXCHANGE": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ chat exchange used for restart announcements."},
@@ -4029,7 +4017,7 @@ def docker_service_container(service, running=True):
 
 def publish_native_player_notification(inner):
     """Publish the native Version 2 command notification used by game maps."""
-    outer = native_command_admin.build_outer(os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", ""), inner)
+    outer = native_command_admin.build_outer(read_secret_env("DUNE_SERVER_COMMANDS_AUTH_TOKEN"), inner)
     outer_b64 = base64.b64encode(json.dumps(outer, separators=(",", ":")).encode("utf-8")).decode("ascii")
     label = re.sub(r"[^a-z0-9-]+", "-", str(inner.get("ServerCommand") or "admin-command").lower())[:48]
     eval_code = (
@@ -5118,7 +5106,7 @@ def db_connect():
         port=int(os.environ.get("DUNE_ADMIN_DB_PORT", "5432")),
         database=DATABASE,
         user=os.environ.get("DUNE_ADMIN_DB_USER", "dune"),
-        password=secret_env("DUNE_ADMIN_DB_PASSWORD", secret_env("POSTGRES_DUNE_PASSWORD")),
+        password=read_secret_env("DUNE_ADMIN_DB_PASSWORD") or read_secret_env("POSTGRES_DUNE_PASSWORD"),
         connect_timeout=5,
         options="-c statement_timeout=15000",
     )
@@ -5232,8 +5220,46 @@ def write_safe_env(updates):
         projected = {**os.environ, **read_env()}
         projected.update({key: str(value) for key, value in updates.items()})
         public_directory.public_config(projected, root=ROOT)
-    backup_file(ENV_FILE)
-    env_file_store.update_values(ENV_FILE, [(key, updates[key]) for key in sorted(updates)])
+    secret_files = {
+        "POSTGRES_DUNE_PASSWORD": "dune-postgres-password",
+        "FLS_SECRET": "dune-fls-token",
+        "DUNE_ADMIN_TOKEN": "dune-admin-token",
+        "DUNE_BOT_API_TOKEN": "dune-bot-api-token",
+        "DUNE_SERVER_COMMANDS_AUTH_TOKEN": "dune-server-commands-token",
+        "DUNE_SERVER_LOGIN_PASSWORD": "dune-server-login-password",
+        "POSTGRES_REPLICATION_PASSWORD": "dune-postgres-replication-password",
+        "DUNE_ANNOUNCE_CHAT_PASSWORD": "dune-announce-chat-password",
+        "DUNE_ANNOUNCE_RMQ_PASSWORD": "dune-announce-rmq-password",
+        "DUNE_GM_COMMAND_AMQP_PASSWORD": "dune-gm-command-amqp-password",
+        "DUNE_GM_COMMAND_RMQ_PASSWORD": "dune-gm-command-rmq-password",
+        "DUNE_CHAT_COMMAND_AMQP_PASSWORD": "dune-chat-command-amqp-password",
+        "DUNE_STEAM_PASSWORD": "dune-steam-password",
+    }
+    secret_updates = {key: updates[key] for key in secret_files if key in updates}
+    secret_dir_value = os.environ.get("DUNE_SECRET_SOURCE_DIRECTORY", "").strip()
+    secret_dir = pathlib.Path(secret_dir_value) if secret_dir_value else None
+    if secret_updates and secret_dir is not None:
+        if not secret_dir.is_dir() or not os.access(secret_dir, os.W_OK):
+            raise RuntimeError("runtime secret source directory is not writable")
+        previous = {}
+        for key in secret_updates:
+            path = secret_dir / secret_files[key]
+            previous[path] = path.read_text(encoding="utf-8") if path.is_file() else None
+        try:
+            for key, value in secret_updates.items():
+                write_secret_file(secret_dir / secret_files[key], str(value))
+            backup_file(ENV_FILE)
+            env_file_store.update_values(ENV_FILE, [(key, updates[key]) for key in sorted(updates)])
+        except BaseException:
+            for path, value in previous.items():
+                if value is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    write_secret_file(path, value)
+            raise
+    else:
+        backup_file(ENV_FILE)
+        env_file_store.update_values(ENV_FILE, [(key, updates[key]) for key in sorted(updates)])
     try:
         ENV_FILE.chmod(0o600)
     except OSError:
@@ -10505,7 +10531,11 @@ def run_incident_readiness_certification(expected_policy_sha256, principal, exec
 def bootstrap_status():
     env_values = read_env()
     required = ("DUNE_STEAM_SERVER_DIR", "DUNE_IMAGE_TAG", "WORLD_NAME", "WORLD_UNIQUE_NAME", "WORLD_REGION", "EXTERNAL_ADDRESS", "FLS_SECRET", "POSTGRES_DUNE_PASSWORD", "DUNE_ADMIN_TOKEN")
-    settings = [{"key": key, "configured": bool(env_values.get(key)), "placeholder": str(env_values.get(key) or "").lower().startswith(("change-me", "/path/to/", "sh-example"))} for key in required]
+    secret_keys = {"FLS_SECRET", "POSTGRES_DUNE_PASSWORD", "DUNE_ADMIN_TOKEN"}
+    settings = []
+    for key in required:
+        value = read_secret_env(key, env_values.get(key, "")) if key in secret_keys else env_values.get(key, "")
+        settings.append({"key": key, "configured": bool(value), "placeholder": str(value or "").lower().startswith(("change-me", "/path/to/", "sh-example"))})
     database = {"ok": False, "error": "not checked"}
     try:
         row = query("select current_database() as database, to_regnamespace('dune') is not null as schema_ready")
@@ -10533,7 +10563,8 @@ def bootstrap_action(action):
         return run_workspace_command([str(ROOT / "scripts" / "generate-rabbitmq-cert.sh"), str(ENV_FILE)], timeout=120)
     if action == "init-database":
         env = os.environ.copy()
-        env["POSTGRES_DUNE_PASSWORD"] = read_env().get("POSTGRES_DUNE_PASSWORD", env.get("DUNE_ADMIN_DB_PASSWORD", ""))
+        env.setdefault("POSTGRES_DUNE_PASSWORD_FILE", "/run/secrets/dune_postgres_password")
+        env.pop("POSTGRES_DUNE_PASSWORD", None)
         completed = subprocess.run([sys.executable, str(ROOT / "scripts" / "bootstrap_db.py")], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False)
         return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
     if action == "start-stack":
@@ -10714,7 +10745,7 @@ def restore_env_preserving_database_password(source):
 
 def restore_postgres_dump(dump_path):
     env = os.environ.copy()
-    env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    env["PGPASSWORD"] = read_secret_env("DUNE_ADMIN_DB_PASSWORD") or read_secret_env("POSTGRES_DUNE_PASSWORD")
     command = [
         "pg_restore", "-h", os.environ.get("DUNE_ADMIN_DB_HOST", "postgres"),
         "-p", os.environ.get("DUNE_ADMIN_DB_PORT", "5432"),
@@ -11039,8 +11070,15 @@ def validate_database_password(password):
 
 def rotate_database_password(connect_fn, password):
     password = validate_database_password(password)
-    current = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    current = read_secret_env("DUNE_ADMIN_DB_PASSWORD") or read_secret_env("POSTGRES_DUNE_PASSWORD")
     env_before = ENV_FILE.read_text(encoding="utf-8")
+    secret_dir_value = os.environ.get("DUNE_SECRET_SOURCE_DIRECTORY", "").strip()
+    if not secret_dir_value:
+        raise RuntimeError("database password rotation requires a writable runtime secret source directory")
+    secret_dir = pathlib.Path(secret_dir_value)
+    secret_path = secret_dir / "dune-postgres-password"
+    if not secret_dir.is_dir() or not secret_path.is_file() or not os.access(secret_dir, os.W_OK):
+        raise RuntimeError("database password rotation requires a writable runtime secret source directory")
     with connect_fn() as recovery_conn:
         recovery_conn.autocommit = True
         with recovery_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
@@ -11049,8 +11087,7 @@ def rotate_database_password(connect_fn, password):
             cursor.execute(f"alter role dune with password {quoted}")
         try:
             write_safe_env({"POSTGRES_DUNE_PASSWORD": password})
-            os.environ["DUNE_ADMIN_DB_PASSWORD"] = password
-            os.environ["POSTGRES_DUNE_PASSWORD"] = password
+            write_secret_file(secret_path, password)
             with db_connect() as verification:
                 with verification.cursor() as cursor:
                     cursor.execute("select current_user")
@@ -11062,8 +11099,7 @@ def rotate_database_password(connect_fn, password):
                 cursor.execute("select quote_literal(%s::text) as password", (current,))
                 cursor.execute(f"alter role dune with password {cursor.fetchone()['password']}")
             env_file_store.replace_contents(ENV_FILE, env_before)
-            os.environ["DUNE_ADMIN_DB_PASSWORD"] = current
-            os.environ["POSTGRES_DUNE_PASSWORD"] = current
+            write_secret_file(secret_path, current)
             raise
     return {"ok": True, "user": "dune", "verified": True, "restartRequired": True, "restartTarget": "all", "password": "[redacted]"}
 
@@ -11452,7 +11488,7 @@ def create_db_backup():
     path = BACKUP_ROOT / f"{stamp}-{suffix}-{DATABASE}.dump"
     temp_path = BACKUP_ROOT / f".{stamp}-{suffix}-{DATABASE}.dump.tmp"
     env = os.environ.copy()
-    env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    env["PGPASSWORD"] = read_secret_env("DUNE_ADMIN_DB_PASSWORD") or read_secret_env("POSTGRES_DUNE_PASSWORD")
     cmd = [
         "pg_dump",
         "-h", os.environ.get("DUNE_ADMIN_DB_HOST", "postgres"),
@@ -12183,13 +12219,7 @@ def ensure_care_package_auto_thread():
 
 
 def discord_adapter_token():
-    token_file = os.environ.get("DUNE_BOT_API_TOKEN_FILE", "").strip()
-    if token_file:
-        try:
-            return pathlib.Path(token_file).read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-    return os.environ.get("DUNE_BOT_API_TOKEN", "").strip()
+    return read_secret_env("DUNE_BOT_API_TOKEN").strip()
 
 
 def discord_role_mapping():
@@ -13089,7 +13119,7 @@ class Handler(BaseHTTPRequestHandler):
                     "progressionConfirm": CONFIRM_PLAYER_PROGRESSION,
                     "progressionRollbackConfirm": CONFIRM_PLAYER_PROGRESSION_ROLLBACK,
                     "transportEnabled": GM_COMMANDS_ENABLED,
-                    "tokenConfigured": bool(os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", "")),
+                    "tokenConfigured": bool(read_secret_env("DUNE_SERVER_COMMANDS_AUTH_TOKEN")),
                 })
             elif parsed.path == "/api/bootstrap":
                 self.require_token()
@@ -18550,7 +18580,7 @@ class Handler(BaseHTTPRequestHandler):
         skill_modules = native_command_admin.load_catalog(ADMIN_SKILL_MODULES_FILE)
         vehicles = native_command_admin.load_catalog(ADMIN_VEHICLES_FILE)
         inner, metadata = native_command_admin.build_inner(action, fls_id, body, skill_modules, vehicles)
-        configured_token = os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", "")
+        configured_token = read_secret_env("DUNE_SERVER_COMMANDS_AUTH_TOKEN")
         preview_outer = native_command_admin.build_outer(configured_token or "<configured-at-execution>", inner)
         result = {
             "ok": True, "dryRun": dry_run, "action": action, "accountId": account_id,

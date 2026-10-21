@@ -13,6 +13,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "vendor"))
 
 import pika
+from secret_env import read_secret_env
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -44,6 +45,12 @@ def env(name, default=""):
     return FILE_ENV.get(name, default)
 
 
+def secret_env(name, default=""):
+    if os.environ.get(f"{name}_FILE", "").strip():
+        return read_secret_env(name, default)
+    return env(name, default)
+
+
 def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
 
@@ -58,7 +65,7 @@ def default_admin_rmq_port():
 
 def amqp_connection():
     user = env("DUNE_GM_COMMAND_AMQP_USER", env("DUNE_ANNOUNCE_RMQ_USER"))
-    password = env("DUNE_GM_COMMAND_AMQP_PASSWORD", env("DUNE_ANNOUNCE_RMQ_PASSWORD"))
+    password = secret_env("DUNE_GM_COMMAND_AMQP_PASSWORD") or secret_env("DUNE_ANNOUNCE_RMQ_PASSWORD")
     if not user or not password:
         raise RuntimeError("missing DUNE_GM_COMMAND_AMQP_USER/PASSWORD or DUNE_ANNOUNCE_RMQ_USER/PASSWORD")
     ssl_options = None
@@ -253,7 +260,9 @@ def publish_command_management(command_text, route, target_player="", admin_play
     body, content_type = serialize_body(envelope)
     url = env("DUNE_GM_COMMAND_RMQ_URL", env("DUNE_ANNOUNCE_RMQ_URL", "http://127.0.0.1:15672")).rstrip("/")
     user = env("DUNE_GM_COMMAND_RMQ_USER", env("DUNE_GM_COMMAND_AMQP_USER", env("DUNE_ANNOUNCE_RMQ_USER", "guest")))
-    password = env("DUNE_GM_COMMAND_RMQ_PASSWORD", env("DUNE_GM_COMMAND_AMQP_PASSWORD", env("DUNE_ANNOUNCE_RMQ_PASSWORD", "guest")))
+    password = secret_env("DUNE_GM_COMMAND_RMQ_PASSWORD") or secret_env("DUNE_GM_COMMAND_AMQP_PASSWORD") or secret_env("DUNE_ANNOUNCE_RMQ_PASSWORD")
+    if not password:
+        raise RuntimeError("missing DUNE_GM_COMMAND_RMQ_PASSWORD or DUNE_ANNOUNCE_RMQ_PASSWORD")
     payload = {
         "properties": {
             "content_type": content_type,

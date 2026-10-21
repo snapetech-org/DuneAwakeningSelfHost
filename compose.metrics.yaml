@@ -58,9 +58,11 @@ services:
     environment:
       DATA_SOURCE_URI: postgres:5432/dune_sb_1_4_0_0?sslmode=disable
       DATA_SOURCE_USER: dune
-      DATA_SOURCE_PASS: ${POSTGRES_DUNE_PASSWORD}
+      DATA_SOURCE_PASS_FILE: /run/secrets/dune_postgres_password
       PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
       PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+    secrets:
+      - dune_postgres_password
     security_opt:
       - no-new-privileges:true
 

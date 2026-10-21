@@ -10,6 +10,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+from secret_env import read_secret_env
 from exchange_category_map import EXCHANGE_CATEGORY_MASKS
 
 DEFAULT_MANUAL = ROOT / "config" / "artificial-exchange-prices.csv"
@@ -74,6 +75,12 @@ def env(name, default=""):
     return FILE_ENV.get(name, default)
 
 
+def secret_env(name, default=""):
+    if os.environ.get(f"{name}_FILE", "").strip():
+        return read_secret_env(name, default)
+    return env(name, default)
+
+
 def db_default_host():
     return "postgres" if pathlib.Path("/workspace/.env").exists() else "127.0.0.1"
 
@@ -90,7 +97,7 @@ def connect_db():
         host=env("DUNE_ADMIN_DB_HOST", db_default_host()),
         port=env("DUNE_ADMIN_DB_PORT", db_default_port()),
         user=env("DUNE_ADMIN_DB_USER", "dune"),
-        password=env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", "")),
+        password=secret_env("DUNE_ADMIN_DB_PASSWORD") or secret_env("POSTGRES_DUNE_PASSWORD"),
         dbname=env("DUNE_ADMIN_DB_NAME", env("DUNE_DATABASE", "dune_sb_1_4_0_0")),
         connect_timeout=5,
         cursor_factory=psycopg2.extras.RealDictCursor,

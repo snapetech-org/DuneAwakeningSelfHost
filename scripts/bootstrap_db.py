@@ -9,6 +9,7 @@ import psycopg2
 from funcomdb.config import Connection, Credentials
 from ToolsDB.settings import Settings
 from ToolsDB.setupdb import setupdb
+from secret_env import read_secret_env
 
 
 HOST = "postgres"
@@ -16,7 +17,9 @@ PORT = 5432
 ADMIN_DATABASE = "postgres"
 DATABASE = "dune_sb_1_4_0_0"
 USER = "dune"
-PASSWORD = os.environ.get("POSTGRES_DUNE_PASSWORD", "change-me-dune-db")
+PASSWORD = read_secret_env("POSTGRES_DUNE_PASSWORD")
+if not PASSWORD:
+    raise RuntimeError("POSTGRES_DUNE_PASSWORD is required")
 SCHEMA = "dune"
 SCHEMA_PATH = pathlib.Path("/root/DuneSandbox/Database")
 

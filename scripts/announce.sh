@@ -52,6 +52,7 @@ import urllib.request
 import uuid
 
 sys.path.insert(0, os.environ.get("DUNE_ANNOUNCE_SCRIPT_DIR", os.getcwd()))
+from secret_env import read_secret_env
 from dune_whisper_route import whisper_queue_for_fls_id, normalize_fls_id
 
 
@@ -95,6 +96,12 @@ def env(name, default=""):
     return file_env.get(name, default)
 
 
+def secret_env(name, default=""):
+    if os.environ.get(f"{name}_FILE", "").strip():
+        return read_secret_env(name, default)
+    return env(name, default)
+
+
 def env_bool(name, default=False):
     value = env(name, "true" if default else "false").lower()
     return value in ("1", "true", "yes", "on")
@@ -114,7 +121,7 @@ def split_csv(value):
 default_url = "http://game-rmq:15672" if os.path.exists("/workspace/.env") else "http://127.0.0.1:15673"
 rmq_url = env("DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL", default_url).rstrip("/")
 sender_user = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
-sender_password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "dash-admin-test")
+sender_password = secret_env("DUNE_ANNOUNCE_CHAT_PASSWORD")
 sender_funcom_id = env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001")
 sender_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "Paul")
 exchange = env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map")
@@ -144,12 +151,12 @@ amqp_host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP
 amqp_port = int(env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))))
 amqp_tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
 management_user = env("DUNE_ANNOUNCE_RMQ_USER", sender_user)
-management_password = env("DUNE_ANNOUNCE_RMQ_PASSWORD", sender_password)
+management_password = secret_env("DUNE_ANNOUNCE_RMQ_PASSWORD", sender_password)
 ensure_account = env_bool("DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT", False)
 db_host = env("DUNE_ADMIN_DB_HOST", "postgres")
 db_port = env("DUNE_ADMIN_DB_PORT", "5432")
 db_user = env("DUNE_ADMIN_DB_USER", "dune")
-db_password = env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", ""))
+db_password = secret_env("DUNE_ADMIN_DB_PASSWORD") or secret_env("POSTGRES_DUNE_PASSWORD")
 db_name = env("DUNE_ADMIN_DB_NAME", "dune")
 platform_id = env("DUNE_ANNOUNCE_CHAT_PLATFORM_ID", "PAUL")
 platform_name = env("DUNE_ANNOUNCE_CHAT_PLATFORM_NAME", "Paul")

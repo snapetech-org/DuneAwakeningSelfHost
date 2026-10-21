@@ -23,6 +23,7 @@ sys.path.insert(0, str(SCRIPT_DIR / "vendor"))
 import pika
 import psycopg2
 import psycopg2.extras
+from secret_env import read_secret_env
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
 from dune_whisper_route import whisper_route_for_fls_id
@@ -52,15 +53,25 @@ def env(name, default=""):
     return default
 
 
+def secret_env(name, default=""):
+    if os.environ.get(f"{name}_FILE", "").strip():
+        return read_secret_env(name, default)
+    value = FILE_ENV.get(name)
+    if value is not None and value != "":
+        return value
+    return read_secret_env(name, default)
+
+
 def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
 
 
 def env_chat_or_announce(chat_name, announce_name, default=""):
-    value = os.environ.get(chat_name)
+    value = secret_env(chat_name, "")
     if value and value != "dash-admin-test":
         return value
-    return env(announce_name, default)
+    value = secret_env(announce_name, default)
+    return "" if value == "dash-admin-test" else value
 
 
 def split_csv(value):
@@ -127,7 +138,7 @@ def connect_db():
         host=db_host,
         port=db_port,
         user=env("DUNE_ADMIN_DB_USER", "dune"),
-        password=env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", "")),
+        password=secret_env("DUNE_ADMIN_DB_PASSWORD") or secret_env("POSTGRES_DUNE_PASSWORD"),
         dbname=env("DUNE_ADMIN_DB_NAME", db_default_name()),
         connect_timeout=5,
     )
@@ -712,7 +723,7 @@ def _admin_json_request(path, payload):
         raise RuntimeError("DUNE_CHAT_COMMAND_ADMIN_PORT must be an integer") from exc
     if port < 1 or port > 65535:
         raise RuntimeError("DUNE_CHAT_COMMAND_ADMIN_PORT must be within 1..65535")
-    token = str(env("DUNE_ADMIN_TOKEN", "") or "").strip()
+    token = str(secret_env("DUNE_ADMIN_TOKEN") or "").strip()
     if not token:
         raise RuntimeError("guarded chat teleport requires DUNE_ADMIN_TOKEN")
     try:

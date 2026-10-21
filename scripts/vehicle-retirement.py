@@ -7,11 +7,14 @@ import argparse
 import json
 import os
 import pathlib
+import sys
 import urllib.error
 import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from secret_env import read_secret_env
 
 
 def read_env(path):
@@ -78,7 +81,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     env_file = read_env(args.env_file)
     base = (args.base_url or f"http://127.0.0.1:{os.environ.get('DUNE_ADMIN_HOST_PORT') or env_file.get('DUNE_ADMIN_HOST_PORT', '18080')}").rstrip("/")
-    token = args.token or os.environ.get("DUNE_ADMIN_TOKEN") or env_file.get("DUNE_ADMIN_TOKEN", "")
+    token = args.token or read_secret_env("DUNE_ADMIN_TOKEN", env_file.get("DUNE_ADMIN_TOKEN", ""))
 
     if args.action == "list":
         query = []

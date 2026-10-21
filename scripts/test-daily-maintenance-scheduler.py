@@ -54,7 +54,8 @@ else:
     index=args.index("--data")
     request=json.loads(args[index + 1])
     pathlib.Path(os.environ["FAKE_CAPTURE"]).write_text(args[index + 1], encoding="utf-8")
-    pathlib.Path(os.environ["FAKE_HEADERS"]).write_text(__import__("json").dumps(args), encoding="utf-8")
+    stdin_config=sys.stdin.read() if "--config" in args and not sys.stdin.isatty() else ""
+    pathlib.Path(os.environ["FAKE_HEADERS"]).write_text(__import__("json").dumps(args + stdin_config.splitlines()), encoding="utf-8")
     failure_file=pathlib.Path(os.environ["FAKE_POST_FAILURE_FILE"])
     remaining=int(failure_file.read_text(encoding="utf-8") or "0") if failure_file.exists() else 0
     if remaining > 0:
@@ -75,6 +76,18 @@ else:
             encoding="utf-8",
         )
         curl.chmod(0o755)
+        # The scheduler refreshes and checks the Steam package before scheduling;
+        # run it against a stub repo so no real SteamCMD or /var/lib write happens.
+        self.repo = self.root / "repo"
+        (self.repo / "scripts" / "lib").mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts" / "lib" / "snape-curl-auth.sh", self.repo / "scripts" / "lib")
+        (self.repo / "scripts" / "update-steam-tool.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (self.repo / "scripts" / "check-steam-update.sh").write_text(
+            "#!/bin/sh\n"
+            "if [ \"${FAKE_STEAM_STATUS:-current}\" = update ]; then echo 'status: update available'; exit 1; fi\n"
+            "echo 'status: current'\nexit 0\n", encoding="utf-8")
+        for stub in ("update-steam-tool.sh", "check-steam-update.sh"):
+            (self.repo / "scripts" / stub).chmod(0o755)
         self.state_file.write_text('{"jobs":[]}', encoding="utf-8")
         self.post_failures.write_text("0", encoding="utf-8")
 
@@ -83,8 +96,10 @@ else:
         environment.update({
             "PATH": str(self.bin) + os.pathsep + environment.get("PATH", ""),
             "DUNE_ENV_FILE": str(self.env_file),
+            "DUNE_REPO_DIR": str(self.repo),
             "DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW": "true",
             "DUNE_DAILY_RESTART_UPDATE_POLICY": "certified",
+            "DUNE_HOTFIX_UPDATE_LOCK_FILE": str(self.root / "hotfix-update.lock"),
             "FAKE_READINESS": json.dumps(readiness),
             "FAKE_CAPTURE": str(self.capture),
             "FAKE_HEADERS": str(self.headers),
@@ -110,6 +125,12 @@ else:
             },
         }
 
+    def test_uncertified_staged_build_refuses_current_build_restart(self):
+        completed = self.invoke(self.update_readiness(False), FAKE_STEAM_STATUS="update")
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("staged but not certified", completed.stderr)
+        self.assertFalse(self.capture.exists())
+
     def test_uncertified_candidate_falls_back_to_current_build_restart(self):
         completed = self.invoke(self.update_readiness(False))
         self.assertEqual(0, completed.returncode, completed.stderr)
@@ -125,7 +146,7 @@ else:
         self.assertEqual("certified", body["update_policy"])
         self.assertIn("daily maintenance update policy: certified", completed.stdout)
         args = json.loads(self.headers.read_text(encoding="utf-8"))
-        self.assertIn("X-DASH-Change-Contract: contract-token", args)
+        self.assertIn('header = "X-DASH-Change-Contract: contract-token"', args)
 
     def test_invalid_readiness_response_falls_back_without_losing_daily_restart(self):
         completed = self.invoke({}, FAKE_READINESS="not-json")
@@ -186,6 +207,7 @@ else:
         scripts = workspace / "scripts"
         scripts.mkdir(parents=True)
         shutil.copy2(ROOT / "scripts" / "restart-target.sh", scripts / "restart-target.sh")
+        shutil.copy2(ROOT / "scripts" / "map_catalog.py", scripts / "map_catalog.py")
         marker = workspace / "acquisition-ran"
         (scripts / "update-steam-tool.sh").write_text(
             f"#!/bin/sh\ntouch {marker}\nexit 99\n", encoding="utf-8",
@@ -201,7 +223,12 @@ else:
             encoding="utf-8",
         )
         docker = self.bin / "docker"
-        docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        docker.write_text(
+            "#!/bin/sh\n"
+            "echo '{\"services\":{\"survival\":{\"command\":[\"/run\",\"/Game/Dune/Maps/Survival_1.Survival_1\",\"-PartitionIndex=1\"]}}}'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
         docker.chmod(0o755)
         environment = os.environ.copy()
         environment.update({

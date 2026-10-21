@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage protected Compose secrets and install them into Unreal config files."""
+"""Stage protected Compose secrets and install game credentials into Unreal config."""
 
 from __future__ import annotations
 
@@ -24,6 +24,24 @@ SECRET_SOURCES = {
     "dune_postgres_replication_password": (
         "dune-postgres-replication-password", "POSTGRES_REPLICATION_PASSWORD", False
     ),
+    "dune_admin_token": ("dune-admin-token", "DUNE_ADMIN_TOKEN", True),
+    "dune_bot_api_token": ("dune-bot-api-token", "DUNE_BOT_API_TOKEN", False),
+    "dune_announce_chat_password": (
+        "dune-announce-chat-password", "DUNE_ANNOUNCE_CHAT_PASSWORD", False
+    ),
+    "dune_announce_rmq_password": (
+        "dune-announce-rmq-password", "DUNE_ANNOUNCE_RMQ_PASSWORD", False
+    ),
+    "dune_gm_command_amqp_password": (
+        "dune-gm-command-amqp-password", "DUNE_GM_COMMAND_AMQP_PASSWORD", False
+    ),
+    "dune_gm_command_rmq_password": (
+        "dune-gm-command-rmq-password", "DUNE_GM_COMMAND_RMQ_PASSWORD", False
+    ),
+    "dune_chat_command_amqp_password": (
+        "dune-chat-command-amqp-password", "DUNE_CHAT_COMMAND_AMQP_PASSWORD", False
+    ),
+    "dune_steam_password": ("dune-steam-password", "DUNE_STEAM_PASSWORD", False),
 }
 
 RUNTIME_FILES = {
@@ -85,7 +103,7 @@ def sync_from_env(env_file: pathlib.Path, secret_dir: pathlib.Path) -> None:
             raise ValueError(f"environment key contains a newline or NUL: {env_key}")
         atomic_write(secret_dir / filename, value.encode("utf-8"))
         written += 1
-    print(f"staged {written} protected game runtime secret files")
+    print(f"staged {written} protected runtime secret files")
 
 
 def read_runtime_secret(secret_dir: pathlib.Path, name: str, *, required: bool) -> str:
@@ -149,7 +167,9 @@ def install_config(server_root: pathlib.Path, secret_dir: pathlib.Path) -> None:
     values: dict[str, str] = {}
     for compose_name, (_filename, _env_key, source_required) in SECRET_SOURCES.items():
         values[compose_name] = read_runtime_secret(
-            secret_dir, compose_name, required=required and source_required
+            secret_dir,
+            compose_name,
+            required=required and source_required and compose_name in RUNTIME_FILES,
         )
 
     sietch_login = read_runtime_secret(secret_dir, "dune_sietch_login_password", required=False)

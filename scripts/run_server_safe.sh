@@ -31,6 +31,7 @@ main() {
   install_brt_dd_narrow_tool_state_binary_patch "$server_root" "$dry_run"
   install_brt_dd_tool_enable_binary_patch "$server_root" "$dry_run"
   sync_default_game_from_usergame "$server_root"
+  install_runtime_secrets "$server_root" "$dry_run"
   load_workspace_value DUNE_SERVER_DISPLAY_NAME
   load_workspace_value DUNE_SERVER_STARTUP_EXECCMDS
   load_workspace_value DUNE_BUILDING_PIECE_LIMIT
@@ -190,23 +191,23 @@ main() {
   local pod_ip="${POD_IP:-127.0.0.1}"
   local args=()
   local arg
-  local prefix
-  local skip_secret_arg
-  local -a secret_arg_prefixes=(
+  local secret_prefix
+  local drop_secret_arg
+  local secret_arg_prefixes=(
     '-ini:engine:[FuncomLiveServices]:ServiceAuthToken='
     '-ini:engine:[FuncomLiveServices]:ServerCommandsAuthToken='
-    '-ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword='
     '-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword='
+    '-ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword='
   )
   for arg in "$@"; do
-    skip_secret_arg=false
-    for prefix in "${secret_arg_prefixes[@]}"; do
-      if [[ "${arg:0:${#prefix}}" == "$prefix" ]]; then
-        skip_secret_arg=true
+    drop_secret_arg=false
+    for secret_prefix in "${secret_arg_prefixes[@]}"; do
+      if [[ "$arg" == "$secret_prefix"* ]]; then
+        drop_secret_arg=true
         break
       fi
     done
-    if [ "$skip_secret_arg" = "true" ]; then
+    if [ "$drop_secret_arg" = "true" ]; then
       continue
     elif [ "$arg" = '-MultiHome=$POD_IP' ] && [ "${DUNE_DISABLE_MULTIHOME:-false}" = "true" ]; then
       continue
@@ -762,6 +763,27 @@ sync_ini_operator_assignments() {
   escaped_key="$(printf '%s' "$key" | sed -e 's/[][\.^$*+?{}|()]/\\&/g')"
   sed -i -E "/^[[:space:]]*;?[[:space:]]*[!+.-]${escaped_key}=.*/d" "$target_ini"
   printf '\n%s\n' "$operator_assignments" >> "$target_ini"
+}
+
+install_runtime_secrets() {
+  local server_root="$1"
+  local dry_run="$2"
+  local secret_script
+  secret_script="$(workspace_script game-runtime-secrets.py)"
+  if [ ! -f "$secret_script" ]; then
+    if [ "${DUNE_RUNTIME_SECRETS_REQUIRED:-false}" = "true" ]; then
+      printf 'runtime secret installer is missing: %s\n' "$secret_script" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if [ "$dry_run" = "true" ]; then
+    printf 'runtime secret installer available: %s\n' "$secret_script"
+    return 0
+  fi
+  python3 "$secret_script" install-config \
+    --server-root "$server_root" \
+    --secret-dir "${DUNE_RUNTIME_SECRET_DIRECTORY:-/run/secrets}"
 }
 
 install_server_display_name() {

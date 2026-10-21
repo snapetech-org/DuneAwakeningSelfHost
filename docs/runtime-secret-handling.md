@@ -1,15 +1,22 @@
-# Game runtime secret handling
+# Runtime secret handling
 
 Game server database passwords and service tokens are mounted as read-only
-Compose secrets. `run_server_safe.sh` writes them to the server's protected
-`Saved/Config/LinuxServer/Game.ini` and `Engine.ini` files before launching the
-game process. The launcher filters legacy credential-bearing `-ini` arguments
-before starting the game, including arguments left in research and lab Compose
-overrides. Credential values must stay in mounted secret files; do not add them
-to a game server command or environment.
+Compose secrets. `run_server_safe.sh` invokes `game-runtime-secrets.py` to write
+them to the server's protected `Saved/Config/LinuxServer/Game.ini` and
+`Engine.ini` files before launching the game process. It also drops legacy
+arguments containing the FLS token, database password, login password, or
+server-command token. Credential values must stay in mounted secret files; do
+not add them to a game server command or environment.
 
-The host `.env` remains the source for the shared credentials. Stage the
-ignored, mode-0600 Compose secret files with:
+The admin panel, chat command consumer, database bootstrap helper, RabbitMQ
+auth shim, and PostgreSQL exporter read credentials from mounted files using
+`*_FILE` settings. The admin panel also mounts the protected secret source
+directory so its database password rotation can update the source file after
+the database role and `.env` value change. The examples keep secret values
+blank; set real values before staging the files.
+
+The host `.env` remains the source for credentials that are synchronized by
+the operator. Stage the ignored, mode-0600 Compose secret files with:
 
 ```sh
 python3 scripts/game-runtime-secrets.py sync-from-env --env-file .env
@@ -19,6 +26,12 @@ The command prints only a completion count. Do not enable shell tracing around
 credential operations. Per-Sietch login passwords are written to separate
 ignored files by `scripts/sietches.sh` and mounted only into their matching
 server.
+
+Some private Funcom control-plane images still accept database, FLS, and
+RabbitMQ credentials only through their native environment settings. Their
+entrypoints have not been verified to support file-based settings. Keep those
+values out of command arguments and do not replace them with guessed `*_FILE`
+names until the image behavior is confirmed.
 
 The public-site snapshot collector does not load the signing key. It sends only
 coarse public status fields over `/run/dune-public-directory-signer.sock` to a
