@@ -137,12 +137,6 @@ if [[ "$brt_dd_invalid_map_enabled" == "true" || "$brt_dd_action_gate_enabled" =
   fi
 fi
 
-fls_ipv4_hosts_enabled="${DUNE_FLS_IPV4_HOSTS_ENABLED:-$(read_env DUNE_FLS_IPV4_HOSTS_ENABLED)}"
-fls_ipv4_hosts_enabled="${fls_ipv4_hosts_enabled:-true}"
-if [[ "$fls_ipv4_hosts_enabled" == "true" ]] && file_exists compose.fls-ipv4-hosts.yaml; then
-  add_file compose.fls-ipv4-hosts.yaml
-fi
-
 director_hostnet_enabled="${DUNE_DIRECTOR_HOSTNET_ENABLED:-$(read_env DUNE_DIRECTOR_HOSTNET_ENABLED)}"
 if [[ "$director_hostnet_enabled" == "true" ]]; then
   if file_exists compose.director-hostnet-cutover.yaml; then

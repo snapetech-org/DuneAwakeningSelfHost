@@ -240,59 +240,54 @@ Admin alerts can include the same signal when
 `DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED=true`; the FLS publication
 subcheck is controlled by `DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED`.
 
-### HP3 on map travel from FLS DNS failure
+### HP3 when Funcom FLS identity verification fails
 
-On 2026-05-28, live players hit HP3 disconnects while entering or leaving
-Overmap and Deep Desert. The destination map logs showed
-`Auth_VerifyFlsServerToken` failing with `Couldn't resolve host name` for
-`sb-retail.fls.funcom.com`, followed by `VerifyIdentity Failed` and the HP3
-`NMT_Failure` rejection. This was not a bad player token; a retry with the same
-identity could succeed after DNS recovered.
+`Pending Connection Failure` is Unreal's general network-failure category. In
+the 2026-10-21 production incident, the map log identified the specific failure
+as `sbHP3$ Server could not verify player's identity.` during
+`VerifyFlsIdentity`. The map's request to
+`https://sb-retail.fls.funcom.com/api/Auth_VerifyFlsServerToken` timed out after
+connecting to an obsolete pinned IPv4 address whose certificate did not match
+the FLS hostname. Removing the stale entries restored current DNS resolution
+and successful TLS verification from a representative map.
 
-The persistent fix is `compose.fls-ipv4-hosts.yaml`. Keep
-`DUNE_FLS_IPV4_HOSTS_ENABLED=true` for live stacks and include the compose files
-from `scripts/compose-files.sh .env`. The overlay pins
-`sb-retail.fls.funcom.com` for Director, Gateway, TextRouter, Survival, and all
-map containers because map containers perform `Auth_VerifyFlsServerToken`
-during travel/login:
+This check is a server-to-Funcom HTTPS request, so a failure can reject
+internal and external players alike. Hairpin routing affects LAN clients that
+reach the server through its public address; it does not explain this FLS
+identity-verification error.
 
-```bash
-IFS=: read -r -a compose_files <<< "$(./scripts/compose-files.sh .env)"
-compose_args=()
-for file in "${compose_files[@]}"; do
-  compose_args+=("-f" "$file")
-done
-docker compose --env-file .env "${compose_args[@]}" config \
-  | awk '/^  overmap:/{flag=1} flag && /^  [[:alnum:]_-]+:/{if ($1 != "overmap:") exit} flag{print}' \
-  | grep -E 'extra_hosts|sb-retail'
-```
+The previous workaround for a 2026-05-28 DNS-resolution incident pinned
+`sb-retail.fls.funcom.com` to two IPv4 addresses. Those addresses became stale.
+Use normal DNS for FLS and do not enable static host pins. The old
+`compose.fls-ipv4-hosts.yaml` file is now an empty compatibility overlay, so an
+older `COMPOSE_FILES` entry cannot reintroduce the pins.
 
-For an immediate no-restart live mitigation, add the same host pin to every
-running Dune service container after verifying the host is `kspls0`:
+For a live incident, verify the target host before editing its environment or
+running-container host files:
 
 ```bash
 hostname
-for c in $(docker ps --format '{{.Names}}' | grep '^dune_server-' | grep -Ev 'postgres|rmq|admin-panel|ingress'); do
-  docker exec "$c" sh -lc "grep -q 'sb-retail.fls.funcom.com' /etc/hosts || printf '13.107.253.70 sb-retail.fls.funcom.com\n13.107.226.70 sb-retail.fls.funcom.com\n' >> /etc/hosts"
-done
 ```
 
-Verify the runtime resolver path from a representative map:
+Only continue with a live change when that prints `kspls0`. Remove
+`compose.fls-ipv4-hosts.yaml` from `COMPOSE_FILES` in `.env` if it is listed,
+then remove existing `sb-retail.fls.funcom.com` lines from running Dune app
+containers' `/etc/hosts`. Do not restart maps just to clear those entries.
+
+Check a representative map's resolver and TLS path:
 
 ```bash
-docker exec dune_server-overmap-1 sh -lc 'python3 - <<PY
-import socket
-for row in socket.getaddrinfo("sb-retail.fls.funcom.com", 443, 0, socket.SOCK_STREAM):
-    print(row[-1][0])
-PY'
+docker exec dune_server-survival-1 getent ahostsv4 sb-retail.fls.funcom.com
+docker exec dune_server-survival-1 curl --disable --noproxy '*' -sS \
+  --connect-timeout 5 --max-time 10 -o /dev/null \
+  -w 'remote=%{remote_ip} http=%{http_code} tls_verify=%{ssl_verify_result}\n' \
+  https://sb-retail.fls.funcom.com/
 ```
 
-Then check recent travel destinations for recurrence:
-
-```bash
-docker logs --since 15m dune_server-overmap-1 dune_server-deep-desert-1 dune_server-arrakeen-1 2>&1 \
-  | grep -Ei 'HP3|Couldn.t resolve host|Auth_VerifyFlsServerToken|VerifyIdentity Failed' || true
-```
+The FLS A record can change. A successful unauthenticated probe returns HTTP
+403 with `tls_verify=0`; that confirms DNS, connectivity, and certificate
+validation. Check recent map logs for further `VerifyFlsIdentity` failures
+afterward.
 
 If the parent server row itself is missing from the browser, nudge `gateway`
 instead of Director. This is also the recovery for accidental FLS identity
