@@ -66,6 +66,7 @@ x-rg-bin-volume: &rg-bin-volume ./vendor/bin/rg:/usr/local/bin/rg:ro
 x-busybox-bin-volume: &busybox-bin-volume ./vendor/bin/busybox:/usr/local/bin/busybox:ro
 x-jq-bin-volume: &jq-bin-volume ./vendor/bin/jq:/usr/local/bin/jq:ro
 x-curl-bin-volume: &curl-bin-volume ./vendor/bin/curl:/usr/local/bin/curl:ro
+x-dune-secret-wrapper-volume: &dune-secret-wrapper-volume ./scripts/dune-secret-env-wrapper.sh:/usr/local/bin/dune-secret-env-wrapper.sh:ro
 
 x-game-server-command:
   run: &cmd-run /workspace/scripts/run_server_safe.sh
@@ -89,6 +90,8 @@ secrets:
   dune_server_commands_auth_token:
     file: ./config/secrets/dune-server-commands-token
   dune_server_login_password:
+  dune_rmq_http_token_auth_secret:
+    file: ./config/secrets/dune-rmq-http-token-auth-secret
     file: ./config/secrets/dune-server-login-password
 
   rmq-admin-port: &cmd-rmq-admin-port --RMQAdminPort=5672
@@ -129,15 +132,18 @@ services:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
     hostname: admin-rmq
     mac_address: 02:42:ac:1f:f0:03
+    entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "rabbitmq"]
     environment:
       RMQ_AUTH_BACKEND_1: cache
-      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "false"
+    secrets:
+      - dune_rmq_http_token_auth_secret
     volumes:
       - *rg-bin-volume
       - *busybox-bin-volume
       - *jq-bin-volume
       - *curl-bin-volume
+      - *dune-secret-wrapper-volume
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-admin.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./data/rabbitmq/admin:/var/lib/rabbitmq
@@ -158,15 +164,18 @@ services:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
     hostname: game-rmq
     mac_address: 02:42:ac:1f:f0:04
+    entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "rabbitmq"]
     environment:
       RMQ_AUTH_BACKEND_1: cache
-      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
+    secrets:
+      - dune_rmq_http_token_auth_secret
     volumes:
       - *rg-bin-volume
       - *busybox-bin-volume
       - *jq-bin-volume
       - *curl-bin-volume
+      - *dune-secret-wrapper-volume
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-game.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./config/tls/rabbitmq/ca.crt:/etc/rabbitmq/cacert.pem:ro
@@ -232,6 +241,7 @@ services:
 
   director:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}
+    entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "director"]
     # Director currently terminates on malformed login envelopes instead of
     # rejecting them. Keep the control plane self-healing while the upstream
     # validation bug is worked around.
@@ -253,23 +263,25 @@ services:
       Database__address: postgres
       Database__port: "5432"
       Database__user: dune
-      Database__password: ${POSTGRES_DUNE_PASSWORD}
-      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${WORLD_NAME}
-      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
       HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
+    secrets:
+      - dune_postgres_password
+      - dune_fls_token
+      - dune_rmq_http_token_auth_secret
     volumes:
       - *rg-bin-volume
       - *busybox-bin-volume
       - *jq-bin-volume
       - *curl-bin-volume
+      - *dune-secret-wrapper-volume
       - ./config/director.ini:/etc/app/conf.d/director.ini:ro
     depends_on:
       - postgres
@@ -282,6 +294,7 @@ services:
   text-router:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${DUNE_IMAGE_TAG}
     mac_address: 02:42:ac:1f:f0:06
+    entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "text-router"]
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -298,24 +311,24 @@ services:
       DuneDatabaseInterfacePSQL_DatabaseHost: postgres
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
       DuneDatabaseInterfacePSQL_DatabaseUser: dune
-      DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
       DuneDatabaseInterfacePSQL_DatabaseName: ${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}
-      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       Database__address: postgres
       Database__port: "5432"
       Database__user: dune
-      Database__password: ${POSTGRES_DUNE_PASSWORD}
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${WORLD_NAME}
       BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
-      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       BATTLEGROUP_LANGUAGE: en-US
       HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
+    secrets:
+      - dune_postgres_password
+      - dune_fls_token
+      - dune_rmq_http_token_auth_secret
     depends_on:
       - postgres
       - admin-rmq
@@ -325,6 +338,7 @@ services:
       - *busybox-bin-volume
       - *jq-bin-volume
       - *curl-bin-volume
+      - *dune-secret-wrapper-volume
     networks:
       default:
         ipv4_address: 172.31.240.6
@@ -332,6 +346,7 @@ services:
   gateway:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}
     mac_address: 02:42:ac:1f:f0:28
+    entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "gateway"]
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -349,24 +364,25 @@ services:
       DuneDatabaseInterfacePSQL_DatabaseHost: postgres
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
       DuneDatabaseInterfacePSQL_DatabaseUser: dune
-      DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
       DuneDatabaseInterfacePSQL_DatabaseName: ${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}
-      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       FuncomLiveServices__BattlegroupAuthorizationPreset: BattlegroupInternal
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
       BATTLEGROUP_DISPLAY_NAME: ${PUBLIC_SERVER_NAME:-${WORLD_NAME}}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${PUBLIC_SERVER_NAME:-${WORLD_NAME}}
-      gateway_farm_api_key: ${FLS_SECRET}
-      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    secrets:
+      - dune_postgres_password
+      - dune_fls_token
+      - dune_rmq_http_token_auth_secret
     volumes:
       - *rg-bin-volume
       - *busybox-bin-volume
       - *jq-bin-volume
       - *curl-bin-volume
+      - *dune-secret-wrapper-volume
       - ./config/gateway.ini:/etc/app/conf.d/gateway.ini:ro
     depends_on:
       - postgres
