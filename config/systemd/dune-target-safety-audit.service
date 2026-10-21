@@ -6,6 +6,11 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+User=keith
+Group=keith
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
 Environment=DUNE_TARGET_AUDIT_PATCH_PROBE_SERVICES=all

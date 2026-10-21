@@ -56,12 +56,28 @@ container_runtime="${CONTAINER_RUNTIME:-docker}"
 exclude_services="${DUNE_RECONCILE_EXCLUDE_SERVICES:-}"
 fail_on_drift="${DUNE_RECONCILE_FAIL_ON_DRIFT:-false}"
 compose_files="$("$script_dir/compose-files.sh" "$env_file")"
+export COMPOSE_FILES="$compose_files"
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_file_array <<< "$compose_files"
 for compose_file in "${compose_file_array[@]}"; do
   [[ -n "$compose_file" ]] && compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 1
+fi
+map_partitions_output="$("$map_catalog_script" "$env_file" --field all-map-partitions --write-cache)"
+if [[ -z "$map_partitions_output" ]]; then
+  printf 'map catalog returned no workers; refusing overlay reconciliation\n' >&2
+  exit 1
+fi
+mapfile -t MAP_PARTITIONS <<< "$map_partitions_output"
+all_map_profiles="$("$map_catalog_script" "$env_file" --field all-profiles)"
+for profile in $all_map_profiles; do
+  compose+=(--profile "$profile")
+done
 
 env_value() {
   local key="$1"
@@ -84,39 +100,12 @@ psql_at() {
   "${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -qAtc "$1"
 }
 
-MAP_PARTITIONS=(
-  "survival:1"
-  "overmap:2"
-  "arrakeen:3"
-  "harko-village:4"
-  "testing-hephaestus:5"
-  "testing-carthag:6"
-  "testing-waterfat:7"
-  "deep-desert:8"
-  "proces-verbal:9"
-  "lostharvest-ecolab-a:10"
-  "lostharvest-ecolab-b:11"
-  "lostharvest-forgottenlab:12"
-  "art-of-kanly:13"
-  "dungeon-hephaestus:14"
-  "dungeon-oldcarthag:15"
-  "faction-outpost-atre:16"
-  "faction-outpost-hark:17"
-  "heighliner-dungeon:18"
-  "ecolab-green-089:19"
-  "ecolab-green-152:20"
-  "ecolab-green-024:21"
-  "ecolab-green-195:22"
-  "ecolab-green-136:23"
-  "overland-m-01:24"
-  "overland-s-04:25"
-  "overland-s-06:26"
-  "bandit-fortress:27"
-  "overland-s-07:28"
-  "overland-s-08:29"
-  "dungeon-thepit:30"
-  "deep-desert-pvp:31"
-)
+building_piece_mode="${DUNE_BUILDING_PIECE_LIMIT_MODE:-$(env_value DUNE_BUILDING_PIECE_LIMIT_MODE)}"
+building_piece_mode="${building_piece_mode:-server-settings}"
+building_settings_enabled="${DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED:-$(env_value DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED)}"
+building_settings_enabled="${building_settings_enabled:-false}"
+subfief_enabled="${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-$(env_value DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED)}"
+subfief_enabled="${subfief_enabled:-false}"
 
 declare -A EXCLUDED_SERVICES=()
 if [[ -n "$exclude_services" ]]; then
@@ -179,10 +168,18 @@ for item in "${MAP_PARTITIONS[@]}"; do
   if [[ -z "$cid" ]]; then
     reason+=("missing-container")
   else
-    container_env_has "$cid" "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true" || reason+=("missing-building-env")
-    container_env_has "$cid" "DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=true" || reason+=("missing-subfief-env")
-    container_env_has "$cid" "DUNE_SUBFIEF_CAP_BINARY_TARGET=all" || reason+=("missing-subfief-target")
-    container_mount_has "$cid" "/tmp/oodle/liboodle-data-shared.so" || reason+=("missing-oodle-mount")
+    if [[ "$building_piece_mode" == "server-settings" && "$building_settings_enabled" == "true" ]]; then
+      container_env_has "$cid" "DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED=true" || reason+=("missing-building-settings-env")
+    elif [[ "$building_piece_mode" == "pak" ]]; then
+      container_env_has "$cid" "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true" || reason+=("missing-building-pak-env")
+      container_mount_has "$cid" "/tmp/oodle/liboodle-data-shared.so" || reason+=("missing-oodle-mount")
+    else
+      reason+=("invalid-building-mode")
+    fi
+    if [[ "$subfief_enabled" == "true" ]]; then
+      container_env_has "$cid" "DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=true" || reason+=("missing-subfief-env")
+      container_env_has "$cid" "DUNE_SUBFIEF_CAP_BINARY_TARGET=subfief" || reason+=("missing-subfief-target")
+    fi
   fi
 
   if ((${#reason[@]} == 0)); then

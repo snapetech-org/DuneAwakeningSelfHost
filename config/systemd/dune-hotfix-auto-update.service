@@ -6,7 +6,13 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+User=keith
+Group=keith
+StateDirectory=dune-hotfix-auto-update
+StateDirectoryMode=0750
 WorkingDirectory=/opt/DuneAwakeningSelfHost
+Environment=DOCKER_CONFIG=/home/keith/.docker
+Environment=DUNE_HOTFIX_UPDATE_LOCK_FILE=/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/hotfix-auto-update-and-restart.sh /opt/DuneAwakeningSelfHost/.env
 TimeoutStartSec=45min

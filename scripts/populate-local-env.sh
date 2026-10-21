@@ -14,7 +14,7 @@ else
   rmq_secret="$(openssl rand -hex 64)"
   world_suffix="$(openssl rand -hex 3)"
 
-  python3 ./scripts/update-env-file.py "$env_file" --quiet \
+  python3 ./scripts/update-env-file.py "$env_file" --allow-protected-link --quiet \
     --set POSTGRES_SUPER_PASSWORD "$postgres_super_password" \
     --set POSTGRES_DUNE_PASSWORD "$postgres_dune_password" \
     --set POSTGRES_REPLICATION_PASSWORD "$postgres_replication_password" \

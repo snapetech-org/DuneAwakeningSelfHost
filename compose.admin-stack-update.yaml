@@ -8,4 +8,5 @@ services:
       - ./admin:/workspace/admin
       - ./scripts:/workspace/scripts
       - ./data:/workspace/data:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/null:/var/run/docker.sock:ro
+      - dune-docker-api:/run/dune-docker-api:ro

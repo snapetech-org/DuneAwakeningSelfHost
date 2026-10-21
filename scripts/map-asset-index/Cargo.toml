@@ -1,0 +1,18 @@
+[package]
+name = "dune-map-asset-index"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+retoc = { path = "/home/keith/.cargo/git/checkouts/retoc-79b33cc09bbfca89/885a8da/retoc" }
+
+[patch."https://github.com/trumank/jmap"]
+jmap = { path = "/home/keith/.cargo/git/checkouts/jmap-b1fc8a569bf5f3e0/3ba766e/jmap" }
+
+[patch."https://github.com/trumank/repak"]
+repak = { path = "/home/keith/.cargo/git/checkouts/repak-f3277a55bbeee40d/355b5f6/repak" }
+
+[patch."https://github.com/trumank/ser-hex"]
+ser-hex = { path = "/home/keith/.cargo/git/checkouts/ser-hex-1b9070e9fabd2465/3d890bb/ser-hex" }

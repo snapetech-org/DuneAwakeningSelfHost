@@ -45,54 +45,8 @@ LAST_ANNOUNCE_RESULT = None
 ITEM_DISPLAY_NAMES = None
 
 
-def read_env_file(path):
-    values = {}
-    try:
-        for raw in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip().strip('"').strip("'")
-    except FileNotFoundError:
-        pass
-    return values
-
-
-FILE_ENV = {}
-for env_path in ("/workspace/.env", ROOT / ".env"):
-    FILE_ENV.update(read_env_file(env_path))
-
-PROCESS_ENV_FIRST = {
-    "DUNE_ADMIN_DB_HOST",
-    "DUNE_ADMIN_DB_PORT",
-    "DUNE_GM_COMMAND_AMQP_HOST",
-    "DUNE_GM_COMMAND_AMQP_PORT",
-    "DUNE_GM_COMMAND_RMQ_URL",
-    "DUNE_CHAT_COMMAND_AMQP_HOST",
-    "DUNE_CHAT_COMMAND_AMQP_PORT",
-    "DUNE_CHAT_COMMAND_AMQP_TLS",
-    "DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL",
-    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST",
-    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT",
-    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS",
-    "DUNE_ANNOUNCE_RMQ_URL",
-}
-
-
 def env(name, default=""):
-    if name in PROCESS_ENV_FIRST:
-        value = os.environ.get(name)
-        if value is not None and value != "":
-            return value
-    if name.startswith("DUNE_CHAT_COMMAND_") or name.startswith("DUNE_ANNOUNCE_"):
-        value = FILE_ENV.get(name)
-        if value is not None and value != "":
-            return value
     value = os.environ.get(name)
-    if value is not None and value != "":
-        return value
-    value = FILE_ENV.get(name)
     if value is not None and value != "":
         return value
     return default
@@ -103,12 +57,6 @@ def env_bool(name, default=False):
 
 
 def env_chat_or_announce(chat_name, announce_name, default=""):
-    value = FILE_ENV.get(chat_name)
-    if value:
-        return value
-    value = FILE_ENV.get(announce_name)
-    if value:
-        return value
     value = os.environ.get(chat_name)
     if value and value != "dash-admin-test":
         return value
@@ -2931,12 +2879,11 @@ def run_announce(message, target_name="", target_fls_id=""):
         inferred_name, inferred_fls_id = infer_command_reply_target()
         target_name = target_name or inferred_name
         target_fls_id = target_fls_id or inferred_fls_id
-    command = env("DUNE_CHAT_COMMAND_REPLY_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", "/workspace/scripts/announce.sh"))
+    command = env("DUNE_CHAT_COMMAND_REPLY_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", "/workspace/scripts/announce_pika.py"))
     if command.startswith("/workspace/") and not pathlib.Path(command).exists():
         command = str(ROOT / command.removeprefix("/workspace/"))
     wrapped = f"[Paul] {message}"
     child_env = os.environ.copy()
-    child_env.update(FILE_ENV)
     cwd = ROOT
     target_reply_mode = env("DUNE_CHAT_COMMAND_TARGET_REPLY_MODE", "").strip().lower()
     if not target_reply_mode and env_bool("DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED", False):

@@ -25,7 +25,7 @@ if [[ "${1:-}" == "compose" ]]; then
   service=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -f|--env-file)
+      -f|--env-file|--profile)
         shift 2
         ;;
       *)
@@ -35,6 +35,10 @@ if [[ "${1:-}" == "compose" ]]; then
   done
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      config)
+        printf '%s\n' '{"services":{"survival":{"command":["-PartitionIndex=1"],"labels":{"dune.map.database-name":"Survival_1"}},"heighliner-dungeon":{"command":["/Game/DLC/B1C3/Maps/MainStory_Chapter3/FallenLight_HighlinerDungeon/Story_HeighlinerDungeon.Story_HeighlinerDungeon","-PartitionIndex=18"]}}}'
+        exit 0
+        ;;
       ps)
         shift
         if [[ "${1:-}" == "-q" || "${1:-}" == "-aq" ]]; then
@@ -103,6 +107,7 @@ status_output="$(
   FAKE_RUNTIME_HEALTH_FILE="$health_file" \
   CONTAINER_RUNTIME="$fake_runtime" \
   COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_MAP_CATALOG_FILE="$tmp_dir/map-catalog.json" \
   "$repo_root/scripts/watch-maps.sh" "$env_file" --status
 )"
 
@@ -122,6 +127,7 @@ dry_run_output="$(
   FAKE_RUNTIME_HEALTH_FILE="$health_file" \
   CONTAINER_RUNTIME="$fake_runtime" \
   COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_MAP_CATALOG_FILE="$tmp_dir/map-catalog.json" \
   DUNE_WATCH_STARTUP_GRACE=0 \
   "$repo_root/scripts/watch-maps.sh" "$env_file" --dry-run
 )"
@@ -152,6 +158,7 @@ degraded_output="$(
   FAKE_RUNTIME_HEALTH_FILE="$health_file" \
   CONTAINER_RUNTIME="$fake_runtime" \
   COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_MAP_CATALOG_FILE="$tmp_dir/map-catalog.json" \
   DUNE_WATCH_STARTUP_GRACE=0 \
   "$repo_root/scripts/watch-maps.sh" "$env_file" --dry-run
 )"
@@ -178,6 +185,7 @@ failed_recovery_output="$(
   FAKE_RECOVERY_LOG="$recovery_log" \
   CONTAINER_RUNTIME="$fake_runtime" \
   COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_MAP_CATALOG_FILE="$tmp_dir/map-catalog.json" \
   DUNE_WATCH_STARTUP_GRACE=0 \
   DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
   "$repo_root/scripts/watch-maps.sh" "$env_file" --dry-run
@@ -237,6 +245,7 @@ FAKE_RECOVERY_LOG="$recovery_log" \
 FAKE_SEED_LOG="$seed_log" \
 CONTAINER_RUNTIME="$fake_runtime" \
 COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+DUNE_MAP_CATALOG_FILE="$tmp_dir/map-catalog.json" \
 DUNE_WATCH_STARTUP_GRACE=0 \
 DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
 DUNE_WATCH_SEED_NEIGHBORS=true \

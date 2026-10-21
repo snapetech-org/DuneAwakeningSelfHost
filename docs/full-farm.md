@@ -1,10 +1,10 @@
 # Full Standing Farm / Warm Pool
 
-This Compose layout can run either the initial nine-map standing farm or the full 30-partition warm pool.
+This Compose layout can run the standing farm or a warm pool. The current committed roster has nine base workers and 30 workers with the all-maps overlay; the actual worker list and count are now derived from the resolved Compose model.
 
 Funcom's template treats most of the non-starting maps as `dedicatedScaling` / on-demand capacity with `replicas: 0`. In Kubernetes, the operator and Director can create those game-server pods when a travel/instance trigger needs them. In Compose, there is no operator, so `compose.allmaps.yaml` keeps one server container warm for every official single-dimension self-host partition. That is a warm-pool substitute for on-demand scaling, not true elastic scaling.
 
-The base standing services cover partitions 1-9. The all-maps overlay adds partitions 10-30. Partition 31 / second Deep Desert is intentionally opt-in.
+The base standing services currently cover partitions 1-9. The all-maps overlay currently adds partitions 10-30. Partition 31 / second Deep Desert remains an explicit opt-in. See [Map worker catalog](map-catalog.md) before adding a worker: lifecycle and admin tooling discover Compose map workers automatically, but a new game asset is not automatically a routable server.
 
 ## Services
 

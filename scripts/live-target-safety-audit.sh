@@ -130,6 +130,22 @@ for compose_file in "${compose_file_array[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
+export COMPOSE_FILES="$compose_files"
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  fail "map catalog helper is missing: $map_catalog_script"
+  exit 1
+fi
+map_partitions_output="$("$map_catalog_script" "$env_file" --field map-partitions --write-cache)"
+if [[ -z "$map_partitions_output" ]]; then
+  fail "map catalog returned no workers"
+  exit 1
+fi
+mapfile -t MAP_PARTITIONS <<< "$map_partitions_output"
+map_profiles="$("$map_catalog_script" "$env_file" --field profiles)"
+for profile in $map_profiles; do
+  compose+=(--profile "$profile")
+done
 
 db="$(env_or_file DUNE_GAME_DB_NAME)"
 db="${db:-$(env_or_file DUNE_DATABASE)}"
@@ -160,39 +176,10 @@ container_id() {
   "${compose[@]}" ps -q "$1" 2>/dev/null || true
 }
 
-MAP_SERVICES=(
-  survival
-  overmap
-  arrakeen
-  harko-village
-  testing-hephaestus
-  testing-carthag
-  testing-waterfat
-  deep-desert
-  proces-verbal
-  lostharvest-ecolab-a
-  lostharvest-ecolab-b
-  lostharvest-forgottenlab
-  art-of-kanly
-  dungeon-hephaestus
-  dungeon-oldcarthag
-  faction-outpost-atre
-  faction-outpost-hark
-  heighliner-dungeon
-  ecolab-green-089
-  ecolab-green-152
-  ecolab-green-024
-  ecolab-green-195
-  ecolab-green-136
-  overland-m-01
-  overland-s-04
-  overland-s-06
-  bandit-fortress
-  overland-s-07
-  overland-s-08
-  dungeon-thepit
-  deep-desert-pvp
-)
+MAP_SERVICES=()
+for item in "${MAP_PARTITIONS[@]}"; do
+  MAP_SERVICES+=("${item%%:*}")
+done
 
 declare -A REQUIRED_MAPS=()
 autoscaler_enabled="$(env_or_file DUNE_AUTOSCALER_ENABLED false)"
@@ -224,10 +211,10 @@ PY
 fi
 
 required_partition_csv=""
-for index in "${!MAP_SERVICES[@]}"; do
-  service="${MAP_SERVICES[$index]}"
+for item in "${MAP_PARTITIONS[@]}"; do
+  service="${item%%:*}"
+  partition="${item##*:}"
   if [[ -n "${REQUIRED_MAPS[$service]:-}" ]]; then
-    partition=$((index + 1))
     required_partition_csv+="${required_partition_csv:+,}$partition"
   fi
 done
@@ -466,26 +453,46 @@ if [[ -n "$player_id" ]]; then
 fi
 
 section "Building Piece And Subfief Caps"
-require_env_value DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED true
-building_limit="$(env_or_file DUNE_BUILDING_PIECE_LIMIT 0)"
-if [[ "$building_limit" =~ ^[0-9]+$ && "$building_limit" -gt 5000 ]]; then
-  ok "DUNE_BUILDING_PIECE_LIMIT=$building_limit"
+building_mode="$(env_or_file DUNE_BUILDING_PIECE_LIMIT_MODE server-settings)"
+building_settings_enabled="$(env_or_file DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED false)"
+if [[ "$building_mode" == "server-settings" && "$building_settings_enabled" == "true" ]]; then
+  building_multiplier="$(env_or_file DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER 0)"
+  if [[ "$building_multiplier" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] &&
+      awk -v multiplier="$building_multiplier" 'BEGIN { exit !(multiplier > 0) }'; then
+    ok "DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED=true multiplier=$building_multiplier"
+  else
+    fail "DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER=$building_multiplier is not positive"
+  fi
+elif [[ "$building_mode" == "pak" ]]; then
+  require_env_value DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED true
+  building_limit="$(env_or_file DUNE_BUILDING_PIECE_LIMIT 0)"
+  if [[ "$building_limit" =~ ^[0-9]+$ && "$building_limit" -gt 5000 ]]; then
+    ok "legacy DUNE_BUILDING_PIECE_LIMIT=$building_limit"
+  else
+    fail "DUNE_BUILDING_PIECE_LIMIT=$building_limit expected >5000 for pak mode"
+  fi
 else
-  fail "DUNE_BUILDING_PIECE_LIMIT=$building_limit expected >5000"
+  fail "unsupported building-piece configuration: mode=$building_mode settings_enabled=$building_settings_enabled"
 fi
-require_env_value DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED true
-require_env_value DUNE_SUBFIEF_CAP_BINARY_TARGET all
-subfief_cap="$(env_or_file DUNE_SUBFIEF_CAP 0)"
-if [[ "$subfief_cap" =~ ^[0-9]+$ && "$subfief_cap" -gt 3 ]]; then
-  ok "DUNE_SUBFIEF_CAP=$subfief_cap"
+subfief_enabled="$(env_or_file DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED false)"
+if [[ "$subfief_enabled" == "true" ]]; then
+  require_env_value DUNE_SUBFIEF_CAP_BINARY_TARGET subfief
+  subfief_cap="$(env_or_file DUNE_SUBFIEF_CAP 0)"
+  if [[ "$subfief_cap" =~ ^[0-9]+$ && "$subfief_cap" -gt 3 ]]; then
+    ok "DUNE_SUBFIEF_CAP=$subfief_cap"
+  else
+    fail "DUNE_SUBFIEF_CAP=$subfief_cap expected >3"
+  fi
 else
-  fail "DUNE_SUBFIEF_CAP=$subfief_cap expected >3"
+  warn "DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED is disabled; current-image signature refresh is still pending"
 fi
 
-if grep -q 'compose.building-piece-limit.yaml' <<< "$compose_files"; then
-  ok "building-piece compose overlay selected"
+if [[ "$building_mode" == "pak" ]] && grep -q 'compose.building-piece-limit.yaml' <<< "$compose_files"; then
+  ok "legacy building-piece compose overlay selected"
+elif [[ "$building_mode" == "server-settings" ]] && ! grep -q 'compose.building-piece-limit.yaml' <<< "$compose_files"; then
+  ok "supported building-piece server-settings path selected"
 else
-  fail "building-piece compose overlay not selected"
+  fail "building-piece compose selection does not match mode=$building_mode"
 fi
 
 mapfile -t probe_services < <(patch_probe_service_list)
@@ -504,7 +511,17 @@ for service in "${probe_services[@]}"; do
     continue
   fi
   building_out="$(tmp_path "live-target-${service}-building.out")"
-  if "$container_runtime" exec "$cid" sh -lc '
+  if [[ "$building_mode" == "server-settings" ]]; then
+    if "$container_runtime" exec "$cid" sh -lc '
+        test -f /home/dune/server/DuneSandbox/Saved/UserSettings/ServerCustomSettings.ini
+        awk -F= "/^BuildingPieceLimitMultiplier=/{if (\$2 > 0) found=1} END {exit !found}" \
+          /home/dune/server/DuneSandbox/Saved/UserSettings/ServerCustomSettings.ini
+      ' >"$building_out" 2>&1; then
+      ok "$service supported BuildingPieceLimitMultiplier present"
+    else
+      fail "$service supported BuildingPieceLimitMultiplier missing or invalid"
+    fi
+  elif "$container_runtime" exec "$cid" sh -lc '
       oodle="${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}"
       if [ ! -f "$oodle" ]; then
         oodle=/workspace/backups/operator-oodle/liboodle-data-shared.so
@@ -525,6 +542,9 @@ for service in "${probe_services[@]}"; do
   fi
   cat "$building_out" | tail -4 | indent
 
+  if [[ "$subfief_enabled" != "true" ]]; then
+    continue
+  fi
   subfief_out="$(tmp_path "live-target-${service}-subfief.out")"
   if "$container_runtime" exec "$cid" sh -lc '
       python3 /workspace/scripts/patch-subfief-cap-binary.py \
@@ -534,11 +554,11 @@ for service in "${probe_services[@]}"; do
         --dry-run
     ' >"$subfief_out" 2>&1; then
     if grep -q 'all selected targets already patched' "$subfief_out"; then
-      ok "$service subfief/building binary caps already patched"
+      ok "$service subfief binary cap already patched"
     elif grep -q 'DRY RUN: would patch' "$subfief_out"; then
-      fail "$service subfief/building binary caps would still patch"
+      fail "$service subfief binary cap would still patch"
     else
-      ok "$service subfief/building binary cap dry-run completed"
+      ok "$service subfief binary cap dry-run completed"
     fi
   else
     fail "$service subfief/building binary cap dry-run failed"

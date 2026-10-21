@@ -37,6 +37,7 @@ case "${1:-}" in
 esac
 
 repo_dir="${DUNE_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$repo_dir/scripts/lib/snape-curl-auth.sh"
 env_file="${DUNE_ENV_FILE:-$repo_dir/.env}"
 admin_host="${DUNE_ADMIN_LOCAL_HOST:-127.0.0.1}"
 admin_port="${DUNE_ADMIN_LOCAL_PORT:-}"
@@ -104,6 +105,61 @@ check_schedule_window() {
 }
 
 check_schedule_window
+
+# Refresh Steam's server package immediately before scheduling the full-farm
+# restart. This shares the updater lock so the maintenance job cannot race a
+# partially downloaded Tuesday patch and then restart the previously loaded
+# Docker build when update readiness is unavailable.
+hotfix_lock_file="$(env_or_file DUNE_HOTFIX_UPDATE_LOCK_FILE)"
+hotfix_lock_file="${hotfix_lock_file:-/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock}"
+hotfix_lock_dir="$(dirname -- "$hotfix_lock_file")"
+if [[ ! -d "$hotfix_lock_dir" ]]; then
+  if ! mkdir -p "$hotfix_lock_dir"; then
+    printf 'fail: cannot create Steam update lock directory: %s\n' "$hotfix_lock_dir" >&2
+    exit 1
+  fi
+fi
+exec 9>"$hotfix_lock_file"
+if ! flock -w 1800 9; then
+  printf 'fail: timed out waiting for the Steam hotfix updater lock\n' >&2
+  exit 1
+fi
+
+steamcmd_enabled="$(env_or_file DUNE_RESTART_STEAMCMD_UPDATE)"
+case "${steamcmd_enabled:-true}" in
+  1|true|yes|on) ;;
+  *)
+    printf 'fail: cannot verify the latest Steam server build while SteamCMD updates are disabled\n' >&2
+    exit 1
+    ;;
+esac
+if ! DUNE_RESTART_STEAM_UPDATE_MODE=steamcmd DUNE_RESTART_STEAMCMD_REQUIRED=true \
+    "$repo_dir/scripts/update-steam-tool.sh" "$env_file"; then
+  printf 'fail: SteamCMD could not refresh the latest server package; maintenance was not scheduled\n' >&2
+  exit 1
+fi
+set +e
+steam_check_output="$("$repo_dir/scripts/check-steam-update.sh" "$env_file" 2>&1)"
+steam_check_rc=$?
+set -e
+printf '%s\n' "$steam_check_output"
+steam_candidate_requires_certification=false
+case "$steam_check_rc" in
+  0)
+    ;;
+  1)
+    if grep -Eq 'status: update available|status: same tag but Steam build changed' <<<"$steam_check_output"; then
+      steam_candidate_requires_certification=true
+    else
+      printf 'fail: Steam build check returned 1 without a recognized update state\n' >&2
+      exit 1
+    fi
+    ;;
+  *)
+    printf 'fail: latest Steam server build could not be verified; maintenance was not scheduled\n' >&2
+    exit "$steam_check_rc"
+    ;;
+esac
 
 if [[ -z "$admin_port" ]]; then
   admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
@@ -204,6 +260,13 @@ else:
   if [[ "$effective_update_policy" == current ]]; then
     printf 'no certified staged update will be applied; daily restart is pinned to the current build\n' >&2
   fi
+fi
+
+if [[ "$steam_candidate_requires_certification" == true \
+    && "$effective_update_policy" != certified \
+    && "$effective_update_policy" != automatic ]]; then
+  printf 'fail: a newer Steam server build is staged but not certified; refusing to schedule a current-build restart\n' >&2
+  exit 1
 fi
 
 body="$(

@@ -5,12 +5,16 @@ Requires=docker.service
 
 [Service]
 Type=simple
+User=keith
+Group=keith
+StateDirectory=dune-map-watchdog
+StateDirectoryMode=0750
 WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
 Environment=DUNE_WATCH_INTERVAL=30
 Environment=DUNE_WATCH_RECOVERY_WAIT=360
 Environment=DUNE_WATCH_COOLDOWN=300
 Environment=DUNE_WATCH_STARTUP_GRACE=300
-Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
+Environment=DUNE_WATCH_LOCK_DIR=/var/lib/dune-map-watchdog/dune-map-watchdog.lock
 Environment=DUNE_WATCH_SEED_NEIGHBORS=true
 Environment=DUNE_WATCH_SEED_INTERVAL=300
 Environment=DUNE_WATCH_SEED_TIMEOUT=90

@@ -38,16 +38,6 @@ fi
 
 compose=(docker compose --env-file "$env_file" -f compose.yaml -f compose.replica.yaml)
 control_services=(postgres admin-rmq game-rmq db-init director text-router gateway rmq-auth-shim)
-map_services=(
-  survival overmap arrakeen harko-village testing-hephaestus testing-carthag
-  testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a
-  lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly
-  dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre
-  faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152
-  ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01
-  overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08
-  dungeon-thepit
-)
 
 printf 'checking primary-side replay status before promotion\n'
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "
@@ -64,6 +54,11 @@ ssh "$remote" "docker rm -f dune-postgres-replica >/dev/null 2>&1 || true"
 
 printf 'starting promoted stack on %s using %s/data as postgres volume\n' "$remote" "$remote_root"
 ssh "$remote" "cd '$remote_repo'
+COMPOSE_FILES=compose.yaml:compose.allmaps.yaml ./scripts/map_catalog.py '$env_file' --field json --write-cache >/dev/null
+map_services=\$(COMPOSE_FILES=compose.yaml:compose.allmaps.yaml ./scripts/map_catalog.py '$env_file' --field services)
+map_profiles=\$(COMPOSE_FILES=compose.yaml:compose.allmaps.yaml ./scripts/map_catalog.py '$env_file' --field profiles)
+profile_args=''
+for profile in \$map_profiles; do profile_args=\"\$profile_args --profile \$profile\"; done
 POSTGRES_REMOTE_REPLICA_ROOT='$remote_root' docker compose --env-file '$env_file' -f compose.yaml -f compose.failover-standby.yaml up -d ${control_services[*]}
-POSTGRES_REMOTE_REPLICA_ROOT='$remote_root' docker compose --env-file '$env_file' -f compose.yaml -f compose.failover-standby.yaml -f compose.allmaps.yaml up -d ${map_services[*]}
+POSTGRES_REMOTE_REPLICA_ROOT='$remote_root' docker compose --env-file '$env_file' -f compose.yaml -f compose.failover-standby.yaml -f compose.allmaps.yaml \$profile_args up -d \$map_services
 COMPOSE_FILES=compose.yaml:compose.failover-standby.yaml:compose.allmaps.yaml ./scripts/status.sh '$env_file'"

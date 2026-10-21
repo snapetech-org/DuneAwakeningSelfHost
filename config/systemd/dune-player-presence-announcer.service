@@ -8,7 +8,13 @@ Wants=network-online.target
 Type=simple
 User=dune
 WorkingDirectory=-/opt/DuneAwakeningSelfHost
-Environment=DUNE_ADMIN_BOT_ENV_FILE=.env
+# The installer renders the service account and absolute paths for the live host.
+EnvironmentFile=/opt/DuneAwakeningSelfHost/config/secrets/player-presence.env
+Environment=DUNE_ADMIN_BOT_ENV_FILE=/dev/null
+Environment=DUNE_PLAYER_PRESENCE_ENV_FILE=/dev/null
+Environment=DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/opt/DuneAwakeningSelfHost/scripts/announce.sh
+Environment=DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND=/opt/DuneAwakeningSelfHost/scripts/announce.sh
+Environment=DUNE_PLAYER_PRESENCE_COMPOSE_PROJECT=dune_server
 ExecStart=/bin/sh -lc 'exec /opt/DuneAwakeningSelfHost/scripts/player-presence-announcer.py --loop'
 Restart=always
 RestartSec=5

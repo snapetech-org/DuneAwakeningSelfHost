@@ -8,14 +8,16 @@ It supersedes ad-hoc cutover steps that lived across
 router users, and bridge IDs in `.env` or private operator notes, not in this
 repo.
 
-The runbook assumes the canonical port ranges:
+The runbook assumes the canonical port ranges, which retain the static map
+ports and reserve room for automatically discovered map workers:
 
-- `GAME_UDP_PORT_RANGE=7777:7810`
-- `IGW_UDP_PORT_RANGE=7888:7918`
+- `GAME_UDP_PORT_RANGE=7777:7871`
+- `IGW_UDP_PORT_RANGE=7888:7982`
 - `GAME_RMQ_PUBLIC_PORT=31982`
 
-Anywhere you see narrower ranges (`7777:7806`, `7888:7917`) it is a regression
-- normalize to the wider range.
+Do not shrink these to the pre-discovery static-map ranges (`7777:7810`,
+`7888:7918`): the map-worker generator allocates only inside the configured
+pools and fails closed when either pool is exhausted.
 
 ## What "active" means
 

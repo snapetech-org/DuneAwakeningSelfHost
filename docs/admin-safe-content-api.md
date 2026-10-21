@@ -111,7 +111,7 @@ Dry-run:
 {
   "dry_run": true,
   "updates": {
-    "globalMiningMultiplier": "2.5"
+    "gatheringAmount": "2.5"
   }
 }
 ```
@@ -123,7 +123,7 @@ Dry-run response:
   "ok": true,
   "dryRun": true,
   "planned": {
-    "globalMiningMultiplier": "2.5"
+    "gatheringAmount": "2.5"
   },
   "restartRequired": true
 }
@@ -135,7 +135,7 @@ Write:
 {
   "confirm": "WRITE TYPED KNOBS",
   "updates": {
-    "globalMiningMultiplier": "2.5"
+    "gatheringAmount": "2.5"
   }
 }
 ```
@@ -158,14 +158,16 @@ Write behavior:
 | ID | Value type |
 | --- | --- |
 | `spiceDeepDesertCaps` | Raw INI string or structured object. |
-| `sandstormEnabled` | `0/1` or `true/false`. |
+| `pvpMode` | One of `Disabled`, `Limited`, or `Full`. |
+| `gatheringAmount` | float, `0..100`. |
+| `sandstormsAllowed` | `true/false`. |
+| `sandwormsAllowed` | `true/false`. |
+| `buildingRestrictionsEnabled` | `true/false`. |
+| `baseBackupToolTimeRestrictionHours` | float, `0..1000`, in hours. |
+| `landsraadSpecializationXpMultiplier` | float, `0..100`. |
 | `sandstormTreasureEnabled` | `0/1` or `true/false`. |
 | `coriolisAutoSpawnEnabled` | `true/false`. |
-| `globalMiningMultiplier` | float, `0..100`. |
-| `vehicleMiningMultiplier` | float, `0..100`. |
 | `pvpResourceMultiplier` | float, `0..100`. |
-| `forcePvpAllPartitions` | `true/false`. |
-| `securityZonesEnabled` | `true/false`. |
 | `buildingShelterThreshold` | float, `0..1`. |
 | `placeableShelterThreshold` | float, `0..1`. |
 | `shelteredProtectionThreshold` | float, `0..1`. |

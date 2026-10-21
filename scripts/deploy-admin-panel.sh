@@ -4,6 +4,7 @@ set -euo pipefail
 env_file="${1:-${DUNE_ENV_FILE:-.env}}"
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/lib/snape-curl-auth.sh"
 if [[ -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
   export COMPOSE_FILES
@@ -116,6 +117,7 @@ python3 scripts/test-desired-state.py
 python3 scripts/test-change-intelligence.py
 python3 scripts/test-deployment-assurance.py
 python3 scripts/test-admin-panel-safe-surfaces.py
+python3 scripts/test-docker-api-proxy.py
 python3 scripts/test-deploy-admin-panel.py
 
 "${compose[@]}" up -d --no-recreate postgres
@@ -144,6 +146,22 @@ mkdir -p -- "$(dirname -- "$maintenance_marker_host")"
 printf 'pid=%s started=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$maintenance_marker_host"
 maintenance_marker_created=true
 wait_for_autoscaler_idle
+
+"${compose[@]}" up -d --no-deps --force-recreate docker-api-broker
+broker_id="$("${compose[@]}" ps -q docker-api-broker)"
+deadline=$((SECONDS + 60))
+broker_status=""
+while (( SECONDS < deadline )); do
+  broker_status="$("$container_runtime" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$broker_id" 2>/dev/null || true)"
+  if [[ "$broker_status" == healthy ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$broker_status" != healthy ]]; then
+  printf 'Docker API broker did not become healthy before admin-panel deploy\n' >&2
+  exit 1
+fi
 
 "${compose[@]}" up -d --no-deps --force-recreate admin-panel admin-panel-ingress
 

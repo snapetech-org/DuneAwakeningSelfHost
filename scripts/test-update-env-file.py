@@ -24,10 +24,10 @@ class UpdateEnvFileTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def run_update(self, *arguments, check=True):
+    def run_update(self, *arguments, check=True, env=None):
         return subprocess.run(
             [str(COMMAND), str(self.env), *arguments], text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check, env=env,
         )
 
     def test_updates_under_same_inode_and_open_descriptor(self):
@@ -79,6 +79,42 @@ class UpdateEnvFileTests(unittest.TestCase):
         oversized = self.run_update("--max-bytes", "8", "--set", "SAFE", "value", check=False)
         self.assertNotEqual(oversized.returncode, 0)
         self.assertEqual(self.env.read_text(encoding="utf-8"), "SAFE=yes\n")
+
+    def test_updates_only_the_approved_private_env_symlink_in_place(self):
+        home = self.root / "home"
+        private_dir = home / ".config" / "dune-selfhost"
+        private_dir.mkdir(parents=True)
+        private_dir.chmod(0o700)
+        target = private_dir / "compose.env"
+        target.write_text("SAFE=yes\n", encoding="utf-8")
+        target.chmod(0o600)
+        self.env.unlink()
+        self.env.symlink_to(target)
+        environment = os.environ.copy()
+        environment["HOME"] = str(home)
+        before = target.stat()
+
+        completed = self.run_update(
+            "--allow-protected-link", "--set", "SAFE", "updated", env=environment,
+        )
+
+        after = target.stat()
+        self.assertEqual((before.st_dev, before.st_ino), (after.st_dev, after.st_ino))
+        self.assertEqual(target.read_text(encoding="utf-8"), "SAFE=updated\n")
+        self.assertIn("inode=", completed.stdout)
+
+    def test_allow_protected_link_rejects_other_targets(self):
+        target = self.root / "target"
+        target.write_text("SAFE=yes\n", encoding="utf-8")
+        self.env.unlink()
+        self.env.symlink_to(target)
+
+        refused = self.run_update(
+            "--allow-protected-link", "--set", "SAFE", "no", check=False,
+        )
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(target.read_text(encoding="utf-8"), "SAFE=yes\n")
 
 
 if __name__ == "__main__":

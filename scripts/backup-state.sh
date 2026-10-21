@@ -347,7 +347,25 @@ printf 'writing backup: %s\n' "$backup_dir"
 
 env_base="$(basename "$env_file")"
 cp "$env_file" "${backup_dir}/${env_base}"
-tar --exclude='config/tls' --exclude='config/tls/**' -czf "${backup_dir}/config.tgz" config
+config_tar_options=(--exclude='config/tls' --exclude='config/tls/**')
+if [[ -L config/secrets ]]; then
+  # Secret sources are deliberately kept outside the workspace, but a full
+  # recovery backup must carry the HMAC keys needed to verify its signed state.
+  # Validate the protected links and refuse to dereference any other config
+  # symlink so the archive cannot unexpectedly walk outside the project.
+  "$script_dir/protect-compose-secrets.sh" "$repo_root" >/dev/null
+  config_symlinks="$(find config -type l -print)"
+  if [[ "$config_symlinks" != "config/secrets" ]]; then
+    printf 'refusing to dereference unexpected config symlink(s): %s\n' "$config_symlinks" >&2
+    exit 1
+  fi
+  config_tar_options+=(--dereference)
+elif [[ ! -d config/secrets ]]; then
+  printf 'config secrets directory is unavailable: config/secrets\n' >&2
+  exit 1
+fi
+tar "${config_tar_options[@]}" -czf "${backup_dir}/config.tgz" config
+chmod 0600 "${backup_dir}/config.tgz"
 if [[ -d config/tls ]]; then
   tar -czf "${backup_dir}/config-tls.tgz" config/tls
 fi

@@ -5,10 +5,11 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/start-full-warm-pool.sh [ENV_FILE] [WAIT_SECONDS]
 
-Starts the configured 30-partition lifecycle in dependency order without
-recreating already-running stateful services. Persisted minimum/balanced/custom
-policies start only always-on maps; full-warm starts every map. Set
-DUNE_WORLD_PARTITION_COUNT=31 only for an intentional second Deep Desert.
+Starts every active map worker discovered from the merged Compose topology
+without recreating already-running stateful services. Persisted
+minimum/balanced/custom policies start only always-on maps; full-warm starts all
+active maps. Profile-gated maps are opt-in through COMPOSE_PROFILES or their
+explicit legacy partition-count label.
 
 Default:
   scripts/start-full-warm-pool.sh .env 600
@@ -40,16 +41,6 @@ if [[ ! "$batch_size" =~ ^[0-9]+$ || ! "$batch_delay" =~ ^[0-9]+$ ]]; then
   printf 'DUNE_WARM_POOL_BATCH_SIZE and DUNE_WARM_POOL_BATCH_DELAY must be numeric\n' >&2
   exit 2
 fi
-partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
-partition_count="${partition_count:-30}"
-case "$partition_count" in
-  30|31) ;;
-  *)
-    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
-    exit 2
-    ;;
-esac
-
 autoscaler_enabled="${DUNE_AUTOSCALER_ENABLED:-$(read_env DUNE_AUTOSCALER_ENABLED)}"
 autoscaler_profile="${DUNE_AUTOSCALER_PROFILE:-$(read_env DUNE_AUTOSCALER_PROFILE)}"
 autoscaler_profile="${autoscaler_profile:-custom}"
@@ -110,6 +101,9 @@ map_is_always_on() {
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$script_dir/ensure-map-network-capacity.py" ]]; then
+  python3 "$script_dir/ensure-map-network-capacity.py" "$env_file"
+fi
 if [[ -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
   export COMPOSE_FILES
@@ -120,6 +114,36 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 1
+fi
+mapfile -t MAP_PARTITIONS < <("$map_catalog_script" "$env_file" --field map-partitions --write-cache)
+mapfile -t INACTIVE_MAP_PARTITIONS < <("$map_catalog_script" "$env_file" --field inactive-map-partitions)
+map_profiles_text="$("$map_catalog_script" "$env_file" --field profiles)"
+if [[ -n "$map_profiles_text" ]]; then
+  read -r -a map_profiles <<< "$map_profiles_text"
+  for profile in "${map_profiles[@]}"; do
+    compose+=(--profile "$profile")
+  done
+fi
+MAP_SERVICES=()
+partition_ids_csv=""
+for entry in "${MAP_PARTITIONS[@]}"; do
+  service="${entry%%:*}"
+  partition_id="${entry##*:}"
+  MAP_SERVICES+=("$service")
+  if [[ -n "$partition_ids_csv" ]]; then
+    partition_ids_csv+=","
+  fi
+  partition_ids_csv+="$partition_id"
+done
+partition_count="${#MAP_SERVICES[@]}"
+if (( partition_count == 0 )); then
+  printf 'map catalog returned no workers; refusing to start an empty map farm\n' >&2
+  exit 1
+fi
 db="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
 db="${db:-dune_sb_1_4_0_0}"
 
@@ -180,7 +204,8 @@ wait_for_counts() {
         count(*)
       from dune.world_partition wp
       left join dune.farm_state fs on fs.server_id = wp.server_id
-      left join dune.active_server_ids asi on asi.server_id = wp.server_id;
+      left join dune.active_server_ids asi on asi.server_id = wp.server_id
+      where wp.partition_id in ($partition_ids_csv)
     ")"
     read -r alive_active active partitions <<< "$row"
     if (( alive_active >= expected && active >= expected )) && [[ "$partitions" == "$partition_count" ]]; then
@@ -263,44 +288,25 @@ if [[ "${DUNE_METRICS_ENABLED:-$(read_env DUNE_METRICS_ENABLED)}" =~ ^(1|true|ye
 fi
 "$script_dir/seed-gateway-neighbor.sh"
 
-printf 'starting base 3 maps\n'
-start_map_group survival overmap arrakeen
+printf 'starting %s active map workers from the Compose catalog\n' "$partition_count"
+start_map_group "${MAP_SERVICES[@]}"
 
-printf 'starting maps 4 through 9\n'
-start_map_group \
-  harko-village testing-hephaestus testing-carthag testing-waterfat \
-  deep-desert proces-verbal
-
-printf 'starting maps 10 through 30\n'
-start_map_group \
-  lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab \
-  art-of-kanly dungeon-hephaestus dungeon-oldcarthag \
-  faction-outpost-atre faction-outpost-hark heighliner-dungeon \
-  ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 \
-  overland-m-01 overland-s-04 overland-s-06 bandit-fortress \
-  overland-s-07 overland-s-08 dungeon-thepit
-
-if [[ "$partition_count" == "31" ]]; then
-  printf 'considering partition 31 second Deep Desert for startup profile\n'
-  start_map_group deep-desert-pvp
-else
-  printf 'partition 31 PVE Hardcore Deep Desert is intentionally disabled; ensuring the old service is stopped\n'
-  "${compose[@]}" stop deep-desert-pvp >/dev/null 2>&1 || true
-fi
+for entry in "${INACTIVE_MAP_PARTITIONS[@]}"; do
+  service="${entry%%:*}"
+  profiles_csv="${entry#*:}"
+  stop_compose=("${compose[@]}")
+  IFS=',' read -ra disabled_profiles <<< "$profiles_csv"
+  for profile in "${disabled_profiles[@]}"; do
+    [[ -n "$profile" ]] && stop_compose+=(--profile "$profile")
+  done
+  printf 'stopping inactive profile-gated map worker: %s\n' "$service"
+  "${stop_compose[@]}" stop "$service" >/dev/null 2>&1 || true
+done
 remove_db_init
 
 if [[ "$selective_startup" == "true" ]]; then
   always_on_count=0
-  for service in \
-    survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat \
-    deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab \
-    art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark \
-    heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 \
-    ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 \
-    overland-s-08 dungeon-thepit deep-desert-pvp; do
-    if [[ "$service" == "deep-desert-pvp" && "$partition_count" != "31" ]]; then
-      continue
-    fi
+  for service in "${MAP_SERVICES[@]}"; do
     map_is_always_on "$service" && always_on_count=$((always_on_count + 1))
   done
   printf 'autoscaler startup active: profile=%s always_on=%s dynamic_maps=%s\n' "$autoscaler_profile" "$autoscaler_always_on" "$((partition_count - always_on_count))"

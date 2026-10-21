@@ -14,9 +14,10 @@ Evidence rules:
 | Surface | Capability | Evidence | Confidence | Mutation risk | Restart required | Validation command | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Config/INI knobs | Deep Desert spice field caps through `[/Script/DuneSandbox.SpiceHarvestingSystem] m_PerMapSystemSettings`. | `DEEP_DESERT_EVENT_KNOBS.md`, `SERVER_RUNTIME_SURFACES.md`, `dune.spicefield_types`, `dune.resourcefield_state`. | high | medium | yes | `select * from dune.spicefield_types order by map, field_kind_id;` | Restore backed-up `UserGame.ini` and restart `deep-desert`. |
-| Config/INI knobs | Sandstorm and Coriolis safe toggles already present in config. Cycle seed, DB wipe, and cycle-end restart fields are excluded from typed writes. | `config/UserGame.ini`, `config/UserEngine.ini`, `SERVER_RUNTIME_SURFACES.md`. | high | medium | yes | `rg -n 'Sandstorm|Coriolis' config/UserGame.ini config/UserEngine.ini` | Restore backed-up config and restart affected maps. |
-| Config/INI knobs | Mining/resource multipliers: `Dune.GlobalMiningOutputMultiplier`, `Dune.GlobalVehicleMiningOutputMultiplier`, `SecurityZones.PvpResourceMultiplier`. | `config/UserEngine.ini`, `docs/server-knobs-audit.md`. | high | low | yes | `rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini` | Restore backed-up `UserEngine.ini` and restart maps. |
-| Config/INI knobs | PvP/security-zone toggles. | `config/UserGame.ini`, `SERVER_CONFIG_KEYS.md`. | high | medium | yes | `rg -n 'Pvp|SecurityZones' config/UserGame.ini` | Restore backed-up `UserGame.ini` and restart maps. |
+| Config/INI knobs | Client-replicated server-custom policy: `PVPMode`, `GatheringAmount`, sandstorm/sandworm permissions, building restrictions, backup cooldown, and Landsraad specialization XP. | `config/UserServerCustomSettings*.ini`, official 1.5.3+ client-replication behavior, `docs/server-knobs-audit.md`. | high | medium | yes | `rg -n 'PVPMode|GatheringAmount|bAllowSandstorms|bAllowSandworms|bIsBuildingRestrictionsEnabled|BaseBackupToolTimeRestriction|LandsraadSpecializationXpMultiplier' config/UserServerCustomSettings*.ini` | Restore backed-up custom-setting overlays and restart affected maps. |
+| Config/INI knobs | Sandstorm and Coriolis map-specific toggles. Cycle seed, DB wipe, and cycle-end restart fields are excluded from typed writes. | `config/UserGame.ini`, `config/UserEngine.ini`, `SERVER_RUNTIME_SURFACES.md`. | high | medium | yes | `rg -n 'Sandstorm|Coriolis' config/UserGame.ini config/UserEngine.ini` | Restore backed-up config and restart affected maps. |
+| Config/INI knobs | Server-side-only resource/combat settings with no direct client-replicated equivalent: `SecurityZones.PvpResourceMultiplier`, vehicle wear, treasure, collision, danger-zone, and invulnerability values. | `config/UserEngine.ini`, `docs/server-knobs-audit.md`. | high | low | yes | `rg -n 'PvpResourceMultiplier|Vehicle\.|Sandworm\.' config/UserEngine.ini` | Restore backed-up `UserEngine.ini` and restart maps. |
+| Config/INI knobs | PvP partition allow-list and other map-specific game settings without a value-preserving custom equivalent. | `config/UserGame.ini`, `SERVER_CONFIG_KEYS.md`. | high | medium | yes | `rg -n 'PvpEnabledPartitions|MapFeatures|Coriolis' config/UserGame.ini` | Restore backed-up `UserGame.ini` and restart maps. |
 | Config/INI knobs | Shelter/hydration candidates. | `HYDRATION_WATER_KNOBS.md`, shipped ShelterSettings section, local candidate overrides. | low to moderate | experimental | yes | Live in-base/outside hydration test after restart. | Restore backed-up `UserGame.ini` and restart maps. |
 | Database state | Currency, Solari, XP, and item grants as a bundled transaction plan or targeted Solari helper. | Existing DASH currency/XP/item grant paths, `/api/admin/solari/inventory`, `/api/admin/solari/bank`, and `docs/admin-mutation-map.md`. | high for carried Solari item stacks, moderate for bank/Exchange | medium to high | no | `/api/admin/bundle` with `dry_run=true`; `/api/admin/solari/inventory` with `dry_run=true`; `/api/admin/solari/bank` with `dry_run=true`. | Manual compensating edits from audit record. |
 | Database state | Faction reputation planning and gated writes through `dune.set_player_faction_reputation`. | `dune.set_player_faction_reputation`, `dune.get_player_current_faction_reputation`, `dune.player_faction_reputation`. | moderate-to-high | high | no | `/api/admin/faction-reputation` with `dry_run=true`; `select * from dune.player_faction_reputation where actor_id=<pawn_id>;` | Run the endpoint again with `mode=set` and the previous value from the audit record. |
@@ -134,13 +135,15 @@ The implementation intentionally keeps catalog reads independent from write gate
 High-confidence controls:
 
 - `spiceDeepDesertCaps`
-- `sandstormEnabled`
+- `pvpMode`
+- `gatheringAmount`
+- `sandstormsAllowed`
+- `sandwormsAllowed`
+- `buildingRestrictionsEnabled`
+- `baseBackupToolTimeRestrictionHours`
+- `landsraadSpecializationXpMultiplier`
 - `coriolisAutoSpawnEnabled`
-- `globalMiningMultiplier`
-- `vehicleMiningMultiplier`
 - `pvpResourceMultiplier`
-- `forcePvpAllPartitions`
-- `securityZonesEnabled`
 
 Moderate or experimental controls:
 
@@ -188,8 +191,8 @@ curl -sS http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/catalog/surfaces | 
 
 curl -sS -H 'Content-Type: application/json' \
   -X POST http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/settings/typed-knobs \
-  -d '{"dry_run":true,"updates":{"globalMiningMultiplier":"2.5"}}' \
-  | jq '.dryRun, .planned.globalMiningMultiplier'
+  -d '{"dry_run":true,"updates":{"gatheringAmount":"2.5"}}' \
+  | jq '.dryRun, .planned.gatheringAmount'
 
 curl -sS -H 'Content-Type: application/json' \
   -X POST http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/events/dry-run \

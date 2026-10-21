@@ -23,8 +23,10 @@ DUNE_DOCKER_NETWORK="${DUNE_DOCKER_NETWORK:-dune_server_default}"
 DUNE_DOCKER_BRIDGE_NAME="${DUNE_DOCKER_BRIDGE_NAME:-$(read_env DUNE_DOCKER_BRIDGE_NAME)}"
 GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"
 GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-31982}"
-GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7810}"
-IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-7888:7918}"
+GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-$(read_env GAME_UDP_PORT_RANGE)}"
+GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7871}"
+IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-$(read_env IGW_UDP_PORT_RANGE)}"
+IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-7888:7982}"
 KNOCK_DUNE_TCP_COMMENT="knock-scanner dune tcp auto-block"
 DOCKER_PUBLIC_UDP_HAIRPIN_COMMENT="dune docker public udp hairpin"
 DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED="${DUNE_DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED:-false}"
@@ -37,7 +39,14 @@ port_in_range() {
     ((port >= start && port <= end))
 }
 
-if [[ "$(id -u)" -ne 0 ]]; then
+has_net_admin_capability() {
+    local cap_eff
+    cap_eff="$(awk '$1 == "CapEff:" {print $2; exit}' /proc/self/status 2>/dev/null || true)"
+    [[ "$cap_eff" =~ ^[[:xdigit:]]+$ ]] || return 1
+    (( (16#$cap_eff & 4096) != 0 ))
+}
+
+if [[ "$(id -u)" -ne 0 ]] && ! has_net_admin_capability; then
     if command -v sudo >/dev/null 2>&1; then
         exec sudo \
             DUNE_PUBLIC_IP="$PUBLIC_IP" \

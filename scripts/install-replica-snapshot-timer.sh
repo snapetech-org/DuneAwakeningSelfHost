@@ -10,10 +10,24 @@ timer_path="${5:-/etc/systemd/system/dune-replica-snapshot.timer}"
 run_user="${DUNE_REPLICA_SNAPSHOT_USER:-$(id -un)}"
 run_group="${DUNE_REPLICA_SNAPSHOT_GROUP:-$(id -gn)}"
 
+read_env() {
+  local key="$1"
+  local value
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1} END {if (!found) exit 0}' "$env_file" 2>/dev/null | tail -1)"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "$value"
+}
+
 if [[ ! -f "$env_file" ]]; then
   printf 'env file not found: %s\n' "$env_file" >&2
   exit 1
 fi
+snapshot_root="${DUNE_REPLICA_SNAPSHOT_ROOT:-$(read_env DUNE_REPLICA_SNAPSHOT_ROOT)}"
+snapshot_root="${snapshot_root:-${repo_root}/backups/replica-snapshots}"
+
 tmp_service="$(mktemp)"
 tmp_timer="$(mktemp)"
 exec_start="${repo_root}/scripts/replica-snapshot.sh ${repo_root}/${env_file}"
@@ -23,7 +37,9 @@ fi
 sed \
   -e "s#^User=.*#User=${run_user}#" \
   -e "s#^Group=.*#Group=${run_group}#" \
-  -e "s#WorkingDirectory=.*#WorkingDirectory=${repo_root}#" \
+  -e "s#^WorkingDirectory=.*#WorkingDirectory=${repo_root}#" \
+  -e "s#^RequiresMountsFor=.*#RequiresMountsFor=${snapshot_root}#" \
+  -e "s#^Environment=DUNE_REPLICA_SNAPSHOT_ROOT=.*#Environment=DUNE_REPLICA_SNAPSHOT_ROOT=${snapshot_root}#" \
   -e "s#ExecStart=.*#ExecStart=${exec_start}#" \
   "$repo_root/config/systemd/dune-replica-snapshot.service" > "$tmp_service"
 cp "$repo_root/config/systemd/dune-replica-snapshot.timer" "$tmp_timer"

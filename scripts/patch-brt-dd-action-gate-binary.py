@@ -34,6 +34,11 @@ PATCHES = [
             bytes.fromhex(
                 "48 85 c0 74 0a 41 b6 01 41 80 7f 55 01 75 03"
             ),
+            # 1.5.3 / 2111270 moved the same byte-field from +0x55 to
+            # +0x51; the branch shape and bypass remain unchanged.
+            bytes.fromhex(
+                "48 85 c0 74 0a 41 b6 01 41 80 7f 51 01 75 03"
+            ),
         ),
         offset=13,
         original=bytes.fromhex("75 03"),
@@ -43,11 +48,16 @@ PATCHES = [
         name="BRT invalid-map reason guard",
         patterns=(
             bytes.fromhex(
+                "41 b6 32 84 c0 0f 85 f7 fe ff ff 41 b6 03"
+            ),
+            bytes.fromhex(
                 "41 b6 32 84 c0 0f 85 f3 fe ff ff 41 b6 03"
             ),
         ),
+        # The 1.5.3 / 2111270 function moved the branch target by four
+        # bytes while retaining the invalid-map guard semantics.
         offset=5,
-        original=bytes.fromhex("0f 85 f3 fe ff ff"),
+        original=bytes.fromhex("0f 85 f7 fe ff ff"),
         patched=bytes.fromhex("90 90 90 90 90 90"),
     ),
 ]
@@ -66,8 +76,9 @@ def find_site(data: bytes, site: PatchSite) -> tuple[int, bool]:
             patch_offset = hit + site.offset
             current = data[patch_offset:patch_offset + len(site.original)]
             suffix_offset = patch_offset + len(site.original)
+            pattern_original = pattern[site.offset:suffix_offset - hit]
             if (
-                current in (site.original, site.patched)
+                current in (site.original, site.patched, pattern_original)
                 and data[suffix_offset:suffix_offset + len(suffix)] == suffix
             ):
                 hits.append(hit)

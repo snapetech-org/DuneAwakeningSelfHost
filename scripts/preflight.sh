@@ -106,6 +106,7 @@ check_fls_environment() {
 check_server_browser_naming() {
   local detail_row="${DUNE_SERVER_DISPLAY_NAME:-}"
   local world_detail_row="${WORLD_NAME:-}"
+  local gateway_registration_row="${PUBLIC_SERVER_NAME:-${WORLD_NAME:-}}"
   local gateway_ini="config/gateway.ini"
   local gateway_parent_row=""
 
@@ -132,14 +133,12 @@ check_server_browser_naming() {
 
   if [[ -z "$gateway_parent_row" ]]; then
     fail "$gateway_ini [gateway].display_name is empty"
-  elif [[ -n "$detail_row" && "$gateway_parent_row" == "$detail_row" ]]; then
-    fail "$gateway_ini [gateway].display_name must be the branded parent row, not the nested/details feature row"
+  elif [[ -n "$world_detail_row" && "$gateway_parent_row" != "$world_detail_row" ]]; then
+    fail "$gateway_ini [gateway].display_name must match WORLD_NAME; all server-browser title fields must match"
+  elif [[ -n "$world_detail_row" && "$gateway_registration_row" != "$world_detail_row" ]]; then
+    fail "PUBLIC_SERVER_NAME must match WORLD_NAME; all server-browser title fields must match"
   else
-    ok "server-browser parent row fields are in sync"
-  fi
-
-  if [[ -n "$gateway_parent_row" && -n "$world_detail_row" && "$gateway_parent_row" == "$world_detail_row" ]]; then
-    fail "$gateway_ini [gateway].display_name must not match WORLD_NAME; WORLD_NAME is the nested/details feature row"
+    ok "server-browser title fields are in sync"
   fi
 }
 

@@ -9,6 +9,7 @@ import pathlib
 import re
 import stat
 from contextlib import contextmanager
+from typing import Callable
 
 
 DEFAULT_MAX_BYTES = 4 * 1024 * 1024
@@ -131,7 +132,13 @@ def replace_contents(path, content, *, max_bytes: int = DEFAULT_MAX_BYTES) -> di
         }
 
 
-def update_values(path, updates, *, max_bytes: int = DEFAULT_MAX_BYTES) -> dict:
+def update_values(
+    path,
+    updates,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    before_write: Callable[[bytes], None] | None = None,
+) -> dict:
     """Set dotenv keys under one exclusive lock while preserving the file inode."""
     requested = _validate_updates(updates)
     wanted = dict(requested)
@@ -158,6 +165,8 @@ def update_values(path, updates, *, max_bytes: int = DEFAULT_MAX_BYTES) -> dict:
         payload = ("\n".join(rendered) + "\n").encode("utf-8")
         _validate_payload(payload, max_bytes)
         if original != payload:
+            if before_write is not None:
+                before_write(original)
             _write_locked(descriptor, payload)
         after = os.fstat(descriptor)
         if (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino):

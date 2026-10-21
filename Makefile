@@ -18,8 +18,11 @@ RELEASE_DIR ?= dist/release
 .PHONY: test-public-ip-canary test-canary-autopilot test-operations-briefing test-operations-calendar test-alert-inbox test-restore-alert-inbox test-peer-watch test-release-packaging test-vendored-release-tools release-package release-verify
 .PHONY: install-swap-warm-service test-swap-warm
 .PHONY: test-control-plane-health install-autoheal-services
+.PHONY: test-map-catalog test-map-network-autogrow
 
 validate: test-control-plane-health
+validate: test-map-catalog
+validate: test-map-network-autogrow
 
 validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-update-env-file test-update-steam-tool test-patch-dune-directory-caddy test-watch-maps test-admin-panel-safe-surfaces test-readme-screenshots test-storage-cleanup test-public-ip-monitor test-sietches test-configure-autoscaler-profile test-inventory-conflicts test-cpu-affinity test-host-tuning test-admin-access-control test-change-approvals test-change-contracts test-public-directory test-feature-readiness test-feature-readiness-history test-credential-lifecycle test-audit-ledger test-federated-auth test-backup-encryption test-restore-drill test-rabbitmq-restore-drill test-operational-slo test-capacity-intelligence test-maintenance-planner test-desired-state test-change-intelligence test-deployment-assurance test-update-readiness test-maintenance-outcomes test-hotfix-update-readiness test-outbound-webhooks test-discord-bot test-community-rewards test-creator-canary test-moderation test-base-creator test-base-retirement test-base-recovery-reminders test-vehicle-retirement test-vehicle-recovery-reminders test-gameplay-presets test-command-console test-cosmetics-admin test-progression-admin test-player-life-recovery test-offline-teleport test-character-backups test-deployment-packaging test-parity-diagnostics test-client-deployment test-windows-client-loader-package test-loader-package-reproducibility test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-smugglers-run-mp test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation test-brt-dd-tooling public-site-check verify-local-state-ignored
 
@@ -976,6 +979,17 @@ secret-scan:
 
 test-watch-maps:
 	./scripts/test-watch-maps.sh
+
+test-map-catalog:
+	python3 scripts/test-map-catalog.py
+	python3 -m py_compile scripts/map_catalog.py scripts/test-map-catalog.py
+
+test-map-network-autogrow:
+	python3 scripts/test-map-worker-discovery.py
+	python3 scripts/test-map-network-autogrow.py
+	python3 -m py_compile scripts/sync-map-workers.py scripts/ensure-map-network-capacity.py scripts/update-router-map-port-ranges.py
+	bash -n scripts/compose-files.sh scripts/start-map-with-post-hooks.sh scripts/recover-map.sh scripts/start-full-warm-pool.sh
+	sh -n scripts/restart-target.sh
 
 test-control-plane-health:
 	bash -n scripts/control-plane-health.sh scripts/director-watchdog.sh scripts/install-autoheal-services.sh scripts/recover-publication.sh scripts/test-control-plane-health.sh

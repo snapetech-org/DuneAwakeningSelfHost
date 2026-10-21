@@ -26,6 +26,8 @@ fi
 source "$env_file"
 : "${CLOUDFLARE_ACCOUNT_ID:?missing CLOUDFLARE_ACCOUNT_ID}"
 : "${CLOUDFLARE_API_TOKEN:?missing CLOUDFLARE_API_TOKEN}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/lib/snape-curl-auth.sh"
 
 api="https://api.cloudflare.com/client/v4"
 cf() {

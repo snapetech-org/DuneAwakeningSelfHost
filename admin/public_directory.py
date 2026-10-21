@@ -210,25 +210,48 @@ def _run(command, *, input_bytes=None):
 
 def ensure_private_key(path, openssl="openssl"):
     path = pathlib.Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
-    lock_path = path.with_name(path.name + ".lock")
-    with open(lock_path, "a+b") as lock:
-        os.chmod(lock_path, 0o600)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if not path.exists():
-            descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-            os.close(descriptor)
-            try:
-                _run([openssl, "genpkey", "-algorithm", ALGORITHM, "-out", temporary])
-                os.chmod(temporary, 0o600)
-                os.replace(temporary, path)
-            finally:
-                pathlib.Path(temporary).unlink(missing_ok=True)
-        details = path.lstat()
-        if not stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode) or details.st_mode & 0o077:
-            raise PermissionError("directory signing key must be a private mode-0600 regular file")
-        _run([openssl, "pkey", "-in", str(path), "-noout", "-check"])
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o700)
+        lock_path = path.with_name(path.name + ".lock")
+        with open(lock_path, "a+b") as lock:
+            os.chmod(lock_path, 0o600)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not path.exists():
+                descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+                os.close(descriptor)
+                try:
+                    _run([openssl, "genpkey", "-algorithm", ALGORITHM, "-out", temporary])
+                    os.chmod(temporary, 0o600)
+                    os.replace(temporary, path)
+                finally:
+                    pathlib.Path(temporary).unlink(missing_ok=True)
+    details = path.lstat()
+    is_systemd_credential = False
+    credential_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    if credential_dir and path.name == "public-directory-ed25519.pem":
+        try:
+            credential_root = pathlib.Path(credential_dir)
+            credential_root_details = credential_root.lstat()
+            is_systemd_credential = (
+                path.parent.resolve(strict=True) == credential_root.resolve(strict=True)
+                and stat.S_ISDIR(credential_root_details.st_mode)
+                and credential_root_details.st_uid == 0
+                and not credential_root_details.st_mode & 0o222
+                and details.st_uid == 0
+                and not details.st_mode & 0o222
+                and stat.S_IMODE(details.st_mode) in (0o400, 0o440)
+            )
+        except OSError:
+            is_systemd_credential = False
+    if not stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode):
+        raise PermissionError("directory signing key must be a private regular file")
+    if is_systemd_credential:
+        if not details.st_mode & 0o444:
+            raise PermissionError("systemd signing credential must be readable")
+    elif details.st_mode & 0o077:
+        raise PermissionError("directory signing key must be a private mode-0600 regular file")
+    _run([openssl, "pkey", "-in", str(path), "-noout", "-check"])
     return path
 
 
@@ -374,7 +397,15 @@ def build_entry(snapshot, config, now=None, openssl="openssl"):
         "playersOnline": bounded_int(snapshot.get("onlineCount", 0), 0, config["capacity"], "online players"),
         "capacity": config["capacity"],
         "build": config["build"],
-        "sietches": sum(1 for row in (snapshot.get("mapStatus") or []) if str(row.get("map") or "").lower() in ("survival_1", "survival")),
+        "sietches": bounded_int(
+            snapshot.get("sietches", sum(
+                1 for row in (snapshot.get("mapStatus") or [])
+                if str(row.get("map") or "").lower() in ("survival_1", "survival")
+            )),
+            0,
+            1000,
+            "directory sietches",
+        ),
         "maps": {
             key_name: bounded_int(maps.get(key_name, 0), 0, 1000, f"{key_name} maps")
             for key_name in ("online", "warming", "onDemand", "offline", "total")

@@ -147,7 +147,7 @@ done
 if [[ "$PERSIST" == true ]]; then
   enabled=true
   [[ "$COMMAND" != "clear" ]] || enabled=false
-  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --quiet \
+  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --allow-protected-link --quiet \
     --set DUNE_CPU_AFFINITY_ENABLED "$enabled"
 fi
 printf 'created_utc=%s\nhostname=%s\nproject=%s\ncommand=%s\nchanged=%s\n' \

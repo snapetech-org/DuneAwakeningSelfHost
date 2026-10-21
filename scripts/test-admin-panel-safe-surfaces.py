@@ -73,6 +73,20 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             ]),
             encoding="utf-8",
         )
+        (self.workspace / "config" / "UserServerCustomSettings.ini").write_text(
+            "\n".join([
+                "[/Script/DuneSandbox.UserServerCustomSettings]",
+                "PVPMode=Limited",
+                "GatheringAmount=1.000000",
+                "bAllowSandstorms=True",
+                "bAllowSandworms=True",
+                "bIsBuildingRestrictionsEnabled=False",
+                "BaseBackupToolTimeRestriction=0.016667",
+                "LandsraadSpecializationXpMultiplier=3.000000",
+                "",
+            ]),
+            encoding="utf-8",
+        )
         (self.workspace / "config" / "director.ini").write_text("[ Battlegroup ]\n", encoding="utf-8")
         (self.workspace / "config" / "gateway.ini").write_text("", encoding="utf-8")
         (self.workspace / "config" / "rabbitmq-admin.conf").write_text("", encoding="utf-8")
@@ -133,6 +147,28 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.execute = execute_fn or (lambda sql, params=None: None)
         self.addCleanup(lambda: setattr(self.panel, "query", original_query))
         self.addCleanup(lambda: setattr(self.panel, "execute", original_execute))
+
+    def test_secret_environment_file_takes_precedence_and_fails_closed(self):
+        secret_file = self.workspace / "admin-token.secret"
+        secret_file.write_text("file-token\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {
+            "DUNE_ADMIN_TOKEN": "inline-token",
+            "DUNE_ADMIN_TOKEN_FILE": str(secret_file),
+        }):
+            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "file-token")
+        with mock.patch.dict(os.environ, {
+            "DUNE_ADMIN_TOKEN": "inline-token",
+            "DUNE_ADMIN_TOKEN_FILE": str(self.workspace / "missing-token.secret"),
+        }):
+            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "")
+
+    def test_db_connect_reads_password_file(self):
+        secret_file = self.workspace / "database-password.secret"
+        secret_file.write_text("file-db-password\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_DB_PASSWORD_FILE": str(secret_file)}):
+            with mock.patch.object(self.panel.psycopg2, "connect", return_value=object()) as connect:
+                self.panel.db_connect()
+        self.assertEqual(connect.call_args.kwargs["password"], "file-db-password")
 
     def patch_flag(self, name, value):
         original = getattr(self.panel, name)
@@ -685,8 +721,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(by_id["recipe-vehicle-function-discovery"]["mutationRisk"], "blocked")
 
     def test_typed_knob_validation_and_backup_write(self):
-        self.assertEqual(self.panel.validate_typed_knob_value("globalMiningMultiplier", "2.5"), "2.5")
-        self.assertEqual(self.panel.validate_typed_knob_value("sandstormEnabled", "false"), "0")
+        self.assertEqual(self.panel.validate_typed_knob_value("gatheringAmount", "2.5"), "2.5")
+        self.assertEqual(self.panel.validate_typed_knob_value("pvpMode", "Limited"), "Limited")
+        self.assertEqual(self.panel.validate_typed_knob_value("sandstormsAllowed", "false"), "False")
         self.assertEqual(self.panel.validate_typed_knob_value("characterRecustomizationCost", "0"), "0")
         with self.assertRaises(ValueError):
             self.panel.validate_typed_knob_value("buildingShelterThreshold", "2")
@@ -694,18 +731,20 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             self.panel.validate_typed_knob_value("characterRecustomizationCost", "-1")
 
         result = self.panel.write_typed_knobs({
-            "globalMiningMultiplier": "2.5",
-            "sandstormEnabled": "false",
-            "forcePvpAllPartitions": "true",
+            "gatheringAmount": "2.5",
+            "sandstormsAllowed": "false",
+            "pvpMode": "Full",
             "characterRecustomizationCost": "0",
         })
         self.assertTrue(result["ok"])
         self.assertTrue(result["restartRequired"])
-        engine = (self.workspace / "config" / "UserEngine.ini").read_text(encoding="utf-8")
+        custom = (self.workspace / "config" / "UserServerCustomSettings.ini").read_text(encoding="utf-8")
         game = (self.workspace / "config" / "UserGame.ini").read_text(encoding="utf-8")
-        self.assertIn("Dune.GlobalMiningOutputMultiplier=2.5", engine)
-        self.assertIn("Sandstorm.Enabled=0", engine)
-        self.assertIn("m_bShouldForceEnablePvpOnAllPartitions=True", game)
+        self.assertIn("GatheringAmount=2.5", custom)
+        self.assertIn("bAllowSandstorms=False", custom)
+        self.assertIn("PVPMode=Full", custom)
+        self.assertNotIn("Dune.GlobalMiningOutputMultiplier", custom)
+        self.assertNotIn("m_bShouldForceEnablePvpOnAllPartitions=True", game)
         self.assertIn("[/Script/DuneSandbox.CharacterRecustomizerSubsystem]", game)
         self.assertIn("m_CostAmount=0", game)
         backups = list((self.workspace / "backups" / "admin-panel").glob("*User*.ini"))
@@ -2306,6 +2345,32 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
         self.assertIn("deep-desert-pvp", panel.GAME_MAP_SERVICES)
         self.assertIn("deep-desert-pvp", panel.RESTART_TARGETS["all"]["services"])
+
+    def test_compose_map_catalog_cache_drives_admin_map_and_partition_rosters(self):
+        workspace = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(workspace, ignore_errors=True))
+        catalog_dir = workspace / "backups" / "admin-panel"
+        catalog_dir.mkdir(parents=True)
+        maps = [
+            {"service": "survival", "partition_id": 1, "map": "Survival_1", "dimension_index": 0, "active": True},
+            {"service": "new-quest-map", "partition_id": 47, "map": "NewQuestMap", "dimension_index": 0, "active": True},
+        ]
+        (catalog_dir / "map-catalog.json").write_text(json.dumps({
+            "schema_version": 1,
+            "maps": maps,
+            "active_services": ["survival", "new-quest-map"],
+            "active_partition_ids": [1, 47],
+            "active_profiles": [],
+        }), encoding="utf-8")
+
+        panel = load_admin_panel(workspace)
+
+        self.assertEqual(["survival", "new-quest-map"], panel.GAME_MAP_SERVICES)
+        self.assertEqual({"survival": 1, "new-quest-map": 47}, panel.GAME_MAP_PARTITIONS)
+        self.assertIn("new-quest-map", panel.RESTART_TARGETS)
+        self.assertEqual("new-quest-map", panel.GAME_MAP_SERVICE_BY_PARTITION[47])
+        panel.query = lambda sql, params=None: [{"partition_id": 47, "players": 3}]
+        self.assertEqual({"new-quest-map": 3}, panel.autoscaler_player_counts())
 
     def test_restart_readiness_uses_autoscaler_always_on_maps(self):
         captured = {}
@@ -4112,7 +4177,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         previous_scan = self.panel.AUTOSCALER_RUNTIME.pop("travelScanAt", None)
         self.panel.docker_service_logs = lambda service, tail=200, since=None, inventory=None: requested_since.append(since) or {"logs": line}
         self.panel.docker_service_inventory = lambda: (_ for _ in ()).throw(AssertionError("shared inventory must be reused"))
-        partition_id = self.panel.GAME_MAP_SERVICES.index("arrakeen") + 1
+        partition_id = self.panel.GAME_MAP_PARTITIONS["arrakeen"]
         self.panel.query = lambda sql, params=None: [{"partition_id": partition_id, "map": "SH_Arrakeen", "dimension_index": 0}]
         self.addCleanup(lambda: setattr(self.panel, "docker_service_logs", original_logs))
         self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))

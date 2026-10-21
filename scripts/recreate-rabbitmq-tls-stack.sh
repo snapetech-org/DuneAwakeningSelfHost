@@ -28,7 +28,16 @@ if [[ ! -f "$env_file" ]]; then
   exit 1
 fi
 
-default_services="game-rmq gateway director text-router survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-136 ecolab-green-195 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 1
+fi
+map_services="$(COMPOSE_FILES="$compose_files" "$map_catalog_script" "$env_file" --field services --write-cache)"
+map_profiles="$(COMPOSE_FILES="$compose_files" "$map_catalog_script" "$env_file" --field profiles)"
+default_services="game-rmq gateway director text-router $map_services"
 services="${DUNE_RMQ_TLS_RECREATE_SERVICES:-$(read_env DUNE_RMQ_TLS_RECREATE_SERVICES)}"
 services="${services:-$default_services}"
 if [[ -z "$services" ]]; then
@@ -36,7 +45,14 @@ if [[ -z "$services" ]]; then
   exit 1
 fi
 
-compose=(docker compose --env-file "$env_file" -f compose.yaml -f compose.allmaps.yaml)
+compose=(docker compose --env-file "$env_file")
+IFS=':' read -ra compose_file_array <<< "$compose_files"
+for compose_file in "${compose_file_array[@]}"; do
+  compose+=(-f "$compose_file")
+done
+for profile in $map_profiles; do
+  compose+=(--profile "$profile")
+done
 
 split_services() {
   rmq_requested=false

@@ -41,7 +41,7 @@ get_env() {
 set_env_value() {
   local key="$1"
   local value="$2"
-  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet --set "$key" "$value"
+  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --allow-protected-link --quiet --set "$key" "$value"
 }
 
 database_exists() {

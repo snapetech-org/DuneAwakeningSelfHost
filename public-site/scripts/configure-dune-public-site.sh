@@ -3,31 +3,11 @@ set -euo pipefail
 
 static_dir="${STATIC_DIR:-/srv/dash-public-site}"
 index_file="${INDEX_FILE:-$static_dir/index.html}"
-env_file="${ENV_FILE:-}"
-
-env_file_value() {
-  local key="$1"
-  local line value
-  [[ -n "$env_file" && -f "$env_file" ]] || return 1
-  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$env_file" | tail -n 1 || true)"
-  [[ -n "$line" ]] || return 1
-  value="${line#*=}"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  value="${value%\"}"
-  value="${value#\"}"
-  value="${value%\'}"
-  value="${value#\'}"
-  printf '%s' "$value"
-}
-
-PUBLIC_SITE_TITLE="${PUBLIC_SITE_TITLE:-$(env_file_value PUBLIC_SITE_TITLE || true)}"
-PUBLIC_SERVER_NAME="${PUBLIC_SERVER_NAME:-$(env_file_value PUBLIC_SERVER_NAME || true)}"
-PUBLIC_SERVER_DESCRIPTION="${PUBLIC_SERVER_DESCRIPTION:-$(env_file_value PUBLIC_SERVER_DESCRIPTION || true)}"
-PUBLIC_SERVER_WHERE="${PUBLIC_SERVER_WHERE:-$(env_file_value PUBLIC_SERVER_WHERE || true)}"
-PUBLIC_STACK_URL="${PUBLIC_STACK_URL:-$(env_file_value PUBLIC_STACK_URL || true)}"
-WORLD_NAME="${WORLD_NAME:-$(env_file_value WORLD_NAME || true)}"
-DUNE_SERVER_DISPLAY_NAME="${DUNE_SERVER_DISPLAY_NAME:-$(env_file_value DUNE_SERVER_DISPLAY_NAME || true)}"
+PUBLIC_SITE_TITLE="${PUBLIC_SITE_TITLE:-}"
+PUBLIC_SERVER_NAME="${PUBLIC_SERVER_NAME:-}"
+PUBLIC_SERVER_DESCRIPTION="${PUBLIC_SERVER_DESCRIPTION:-}"
+PUBLIC_SERVER_WHERE="${PUBLIC_SERVER_WHERE:-}"
+PUBLIC_STACK_URL="${PUBLIC_STACK_URL:-}"
 
 server_name="${WORLD_NAME:-${PUBLIC_SERVER_NAME:-${PUBLIC_SITE_TITLE:-Dune Awakening Server}}}"
 server_description="${DUNE_SERVER_DISPLAY_NAME:-${PUBLIC_SERVER_DESCRIPTION:-A community Dune Awakening server with public status, settings, and an active player map.}}"
@@ -44,9 +24,9 @@ Usage:
   STATIC_DIR=/srv/dune-public-site \\
   ./public-site/scripts/configure-dune-public-site.sh
 
-Updates common public-facing text in an installed static Dune site. Server
-name and description default to the same WORLD_NAME and
-DUNE_SERVER_DISPLAY_NAME values used by the game stack.
+Updates common public-facing text in an installed static Dune site. The
+renderer supplies these values from its public-only environment file; direct
+invocations can pass the public text as environment variables.
 EOF
 }
 

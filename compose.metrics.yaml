@@ -33,14 +33,21 @@ services:
   cadvisor:
     image: ${DUNE_METRICS_CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.52.1}
     restart: unless-stopped
-    privileged: true
+    privileged: false
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
     command:
-      - --docker_only=true
+      - --listen_ip=0.0.0.0
+      - --docker_only=false
       - --housekeeping_interval=10s
       - --store_container_labels=false
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro

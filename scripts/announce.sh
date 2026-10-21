@@ -44,6 +44,7 @@ import ssl
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -73,7 +74,12 @@ def read_env_file(path):
 
 
 file_env = {}
-for env_path in ("/workspace/.env", os.path.join(os.getcwd(), ".env")):
+configured_env_files = os.environ.get("DUNE_ANNOUNCE_ENV_FILE")
+if configured_env_files is None:
+    env_paths = ("/workspace/.env", os.path.join(os.getcwd(), ".env"))
+else:
+    env_paths = tuple(path for path in configured_env_files.split(os.pathsep) if path)
+for env_path in env_paths:
     file_env.update(read_env_file(env_path))
 
 
@@ -132,7 +138,6 @@ if target_fls_ids:
     if "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS" not in os.environ or routing_keys == [""]:
         routing_keys = target_fls_ids
 cleanup_target_bindings = env_bool("DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS", False)
-compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
 docker_socket = env("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 http_timeout = float(env("DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS", "2"))
 amqp_host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "172.31.240.1" if os.path.exists("/workspace/.env") else "127.0.0.1"))
@@ -286,71 +291,6 @@ def docker_api(method, path, body=None, timeout=30):
     return status, payload
 
 
-def docker_exec(container_id, command, timeout=30):
-    status, payload = docker_api("POST", f"/containers/{container_id}/exec", {
-        "AttachStdout": True,
-        "AttachStderr": True,
-        "Tty": False,
-        "Cmd": command,
-    }, timeout=timeout)
-    if status != 201:
-        raise RuntimeError(f"docker exec create failed: HTTP {status} {payload[:200]!r}")
-    exec_id = json.loads(payload.decode())["Id"]
-    status, payload = docker_api("POST", f"/exec/{exec_id}/start", {
-        "Detach": False,
-        "Tty": False,
-    }, timeout=timeout)
-    if status != 200:
-        raise RuntimeError(f"docker exec start failed: HTTP {status} {payload[:200]!r}")
-    output = bytearray()
-    rest = payload
-    while len(rest) >= 8:
-        stream_size = int.from_bytes(rest[4:8], "big")
-        output.extend(rest[8:8 + stream_size])
-        rest = rest[8 + stream_size:]
-    if rest:
-        output.extend(rest)
-    status, inspect_payload = docker_api("GET", f"/exec/{exec_id}/json", timeout=timeout)
-    if status != 200:
-        raise RuntimeError(f"docker exec inspect failed: HTTP {status}")
-    exit_code = json.loads(inspect_payload.decode()).get("ExitCode")
-    text = output.decode(errors="replace")
-    if exit_code != 0:
-        raise RuntimeError(f"docker exec failed with exit {exit_code}: {text.strip()}")
-    return text
-
-
-def demux_docker_payload(payload):
-    output = bytearray()
-    rest = payload
-    while len(rest) >= 8 and rest[0] in (1, 2):
-        stream_size = int.from_bytes(rest[4:8], "big")
-        if stream_size < 0 or len(rest) < 8 + stream_size:
-            break
-        output.extend(rest[8:8 + stream_size])
-        rest = rest[8 + stream_size:]
-    if output:
-        return output.decode(errors="replace")
-    return payload.decode(errors="replace")
-
-
-def find_compose_container(service):
-    filters = {
-        "label": [
-            f"com.docker.compose.project={compose_project}",
-            f"com.docker.compose.service={service}",
-        ]
-    }
-    query = urllib.parse.urlencode({"all": "false", "filters": json.dumps(filters)})
-    status, payload = docker_api("GET", f"/containers/json?{query}")
-    if status != 200:
-        raise RuntimeError(f"container lookup failed: HTTP {status}")
-    containers = json.loads(payload.decode() or "[]")
-    if not containers:
-        raise RuntimeError(f"no running compose container found for service {service}")
-    return containers[0]["Id"]
-
-
 def current_image():
     container_name = env("HOSTNAME", "")
     if not container_name:
@@ -362,142 +302,105 @@ def current_image():
 
 
 def publish_with_host_container():
-    host_workspace = env("DUNE_ANNOUNCE_HOST_WORKSPACE", "")
-    if not host_workspace:
-        raise RuntimeError("missing DUNE_ANNOUNCE_HOST_WORKSPACE")
-    name = "dash-announce-" + re.sub(r"[^A-Za-z0-9_.-]", "-", job_id or secrets.token_hex(4))[:40]
+    script_dir = os.path.realpath(os.environ.get("DUNE_ANNOUNCE_SCRIPT_DIR", ""))
+    if not script_dir or not os.path.isdir(script_dir):
+        raise RuntimeError("announcement script directory is unavailable")
+    name = "dash-announce-" + uuid.uuid4().hex
     image = env("DUNE_ANNOUNCE_DOCKER_IMAGE", current_image())
-    child_env = []
     merged_env = dict(file_env)
     merged_env.update(os.environ)
     merged_env["DUNE_ANNOUNCE_HOST_AMQP_HOST"] = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "172.31.240.1")
     merged_env["DUNE_ANNOUNCE_HOST_AMQP_PORT"] = env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))
-    for key, value in merged_env.items():
-        if key.startswith("DUNE_ANNOUNCE_") or key.startswith("GAME_RMQ_"):
-            child_env.append(f"{key}={value}")
-    body = {
-        "Image": image,
-        "Entrypoint": ["python3"],
-        "Cmd": ["/workspace/scripts/announce_pika.py", message, restart_at, job_id],
-        "WorkingDir": "/workspace",
-        "Env": child_env,
-        "HostConfig": {
-            "NetworkMode": "host",
-            "Binds": [f"{host_workspace}:/workspace:ro"],
-            "AutoRemove": False,
-        },
-    }
-    status, payload_bytes = docker_api("POST", f"/containers/create?name={urllib.parse.quote(name)}", body)
-    if status == 409:
-        docker_api("DELETE", f"/containers/{name}?force=true")
-        status, payload_bytes = docker_api("POST", f"/containers/create?name={urllib.parse.quote(name)}", body)
-    if status != 201:
-        raise RuntimeError(f"container create failed: HTTP {status} {payload_bytes[:200]!r}")
-    container_id = json.loads(payload_bytes.decode())["Id"]
+    runtime_names = (
+        "DUNE_ANNOUNCE_CHAT_CHANNEL",
+        "DUNE_ANNOUNCE_CHAT_EXCHANGE",
+        "DUNE_ANNOUNCE_CHAT_FUNCOM_ID",
+        "DUNE_ANNOUNCE_CHAT_PASSWORD",
+        "DUNE_ANNOUNCE_CHAT_SPOOF_NAME",
+        "DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD",
+        "DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME",
+        "DUNE_ANNOUNCE_CHAT_USER",
+        "DUNE_ANNOUNCE_CHAT_USER_NAME_TO",
+        "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS",
+        "DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST",
+        "DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT",
+        "DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS",
+        "DUNE_ANNOUNCE_HOST_AMQP_HOST",
+        "DUNE_ANNOUNCE_HOST_AMQP_PORT",
+        "GAME_RMQ_PUBLIC_PORT",
+    )
+    runtime_values = {key: merged_env[key] for key in runtime_names if key in merged_env}
+    runtime_values["DUNE_ANNOUNCE_MESSAGE"] = message
+    runtime_values["DUNE_ANNOUNCE_RESTART_AT"] = restart_at
+    runtime_values["DUNE_ANNOUNCE_JOB_ID"] = job_id
+
+    secret_dir = os.path.join(os.path.dirname(script_dir), "config", "secrets")
+    if not os.path.isdir(secret_dir):
+        secret_dir = tempfile.gettempdir()
+    secret_fd, secret_path = tempfile.mkstemp(prefix=".announce-runtime-", suffix=".json", dir=secret_dir)
     try:
-        status, payload_bytes = docker_api("POST", f"/containers/{container_id}/start")
-        if status != 204:
-            raise RuntimeError(f"container start failed: HTTP {status} {payload_bytes[:200]!r}")
-        status, payload_bytes = docker_api("POST", f"/containers/{container_id}/wait", timeout=60)
-        if status != 200:
-            raise RuntimeError(f"container wait failed: HTTP {status} {payload_bytes[:200]!r}")
-        wait_result = json.loads(payload_bytes.decode() or "{}")
-        status, logs = docker_api("GET", f"/containers/{container_id}/logs?stdout=true&stderr=true")
-        text = demux_docker_payload(logs)
-        if int(wait_result.get("StatusCode") or 1) != 0:
+        os.fchmod(secret_fd, 0o600)
+        with os.fdopen(secret_fd, "w", encoding="utf-8") as handle:
+            json.dump(runtime_values, handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        child_env = ["DUNE_ANNOUNCE_ENV_JSON=/tmp/announce-runtime.json"]
+        body = {
+            "Image": image,
+            "Entrypoint": ["python3"],
+            "Cmd": ["/workspace/scripts/announce_pika.py"],
+            "WorkingDir": "/workspace/scripts",
+            "Env": child_env,
+            "HostConfig": {
+                "NetworkMode": "host",
+                "Mounts": [
+                    {"Type": "bind", "Source": script_dir, "Target": "/workspace/scripts", "ReadOnly": True},
+                    {"Type": "bind", "Source": secret_path, "Target": "/tmp/announce-runtime.json", "ReadOnly": True},
+                ],
+                "AutoRemove": False,
+            },
+        }
+        status, payload_bytes = docker_api("POST", f"/containers/create?name={urllib.parse.quote(name)}", body)
+        if status != 201:
+            raise RuntimeError(f"container create failed: HTTP {status}")
+        container_id = json.loads(payload_bytes.decode())["Id"]
+        try:
+            status, payload_bytes = docker_api("POST", f"/containers/{container_id}/start")
+            if status != 204:
+                raise RuntimeError(f"container start failed: HTTP {status}")
+            status, payload_bytes = docker_api("POST", f"/containers/{container_id}/wait", timeout=60)
+            if status != 200:
+                raise RuntimeError(f"container wait failed: HTTP {status}")
+            wait_result = json.loads(payload_bytes.decode() or "{}")
+            status, logs = docker_api("GET", f"/containers/{container_id}/logs?stdout=true&stderr=true")
+            text = logs.decode(errors="replace")
+            if int(wait_result.get("StatusCode") or 1) != 0:
+                for line in reversed(text.strip().splitlines()):
+                    start = line.find("{")
+                    if start < 0:
+                        continue
+                    try:
+                        parsed = json.loads(line[start:])
+                    except json.JSONDecodeError:
+                        continue
+                    if parsed.get("ok"):
+                        return parsed
+                raise RuntimeError("announcement fallback container failed")
             for line in reversed(text.strip().splitlines()):
                 start = line.find("{")
-                if start < 0:
-                    continue
-                try:
-                    parsed = json.loads(line[start:])
-                except json.JSONDecodeError:
-                    continue
-                if parsed.get("ok"):
-                    return parsed
-            raise RuntimeError(text.strip() or f"publisher exited {wait_result.get('StatusCode')}")
-        for line in reversed(text.strip().splitlines()):
-            start = line.find("{")
-            if start >= 0:
-                return json.loads(line[start:])
-        raise RuntimeError("publisher did not emit JSON")
+                if start >= 0:
+                    return json.loads(line[start:])
+            raise RuntimeError("announcement fallback returned no result")
+        finally:
+            status, _ = docker_api("DELETE", f"/containers/{container_id}?force=true")
+            if status not in (204, 404):
+                raise RuntimeError(f"could not remove announcement fallback container (HTTP {status})")
     finally:
-        docker_api("DELETE", f"/containers/{container_id}?force=true")
-
-
-def publish_with_docker():
-    container_id = find_compose_container("game-rmq")
-
-    def rabbit(args):
-        return docker_exec(container_id, [
-            "rabbitmqadmin",
-            "--host", "127.0.0.1",
-            "--port", "15672",
-            "--username", management_user,
-            "--password", management_password,
-            *args,
-        ])
-
-    docker_bound = []
-    docker_errors = []
-    if bind_online_queues or target_queues:
         try:
-            seen = set(target_queues)
-            if bind_online_queues:
-                queue_text = rabbit(["--format", "raw_json", "list", "queues", "name", "consumers"])
-                for queue in json.loads(queue_text or "[]"):
-                    name = queue.get("name", "")
-                    if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
-                        seen.add(name)
-            for queue_name in sorted(seen):
-                if not queue_name:
-                    continue
-                for routing_key in routing_keys:
-                    rabbit([
-                        "declare", "binding",
-                        f"source={exchange}",
-                        "destination_type=queue",
-                        f"destination={queue_name}",
-                        f"routing_key={routing_key}",
-                    ])
-                    docker_bound.append({"queue": queue_name, "routingKey": routing_key})
-        except Exception as exc:
-            docker_errors.append({"step": "dockerBind", "error": str(exc)})
-
-    return docker_bound, docker_errors
-
-
-def cleanup_with_docker(bound):
-    if not bound:
-        return []
-    container_id = find_compose_container("game-rmq")
-
-    def rabbit(args):
-        return docker_exec(container_id, [
-            "rabbitmqadmin",
-            "--host", "127.0.0.1",
-            "--port", "15672",
-            "--username", management_user,
-            "--password", management_password,
-            *args,
-        ])
-
-    errors = []
-    for item in bound:
-        props = item.get("routingKey") or "~"
-        try:
-            rabbit([
-                "delete", "binding",
-                f"source={exchange}",
-                "destination_type=queue",
-                f"destination={item['queue']}",
-                f"properties_key={props}",
-            ])
-        except Exception as exc:
-            errors.append({"queue": item.get("queue"), "routingKey": item.get("routingKey"), "error": str(exc)})
-    return errors
-
-
+            os.unlink(secret_path)
+        except FileNotFoundError:
+            pass
 def shortstr(value):
     data = value.encode()
     if len(data) > 255:
@@ -640,7 +543,7 @@ def publish_with_amqp():
 
 bound_queues = []
 bind_errors = []
-if (bind_online_queues or target_queues) and not os.path.exists(docker_socket):
+if bind_online_queues or target_queues:
     queues, error = safe_request("GET", f"/api/queues/{vhost}")
     if error:
         bind_errors.append({"step": "listQueues", "error": error})
@@ -705,25 +608,17 @@ payload = {"content": json.dumps(chat_message, separators=(",", ":")), "Type": "
 
 fallback = ""
 results = []
-if os.path.exists(docker_socket):
+try:
+    results = publish_with_amqp()
+    fallback = "direct-pika"
+except Exception as exc:
+    bind_errors.append({"step": "directPika", "error": str(exc)})
     try:
-        bound_queues, bind_errors = publish_with_docker()
-        results = publish_with_amqp()
-        fallback = "direct-pika"
-    except Exception as exc:
-        bind_errors.append({"step": "directPika", "error": str(exc)})
-        try:
-            host_result = publish_with_host_container()
-            results = host_result.get("routingKeys", [])
-            fallback = "docker-host-pika"
-        except Exception as host_exc:
-            bind_errors.append({"step": "dockerHostPika", "error": str(host_exc)})
-else:
-    try:
-        results = publish_with_amqp()
-        fallback = "direct-pika"
-    except Exception as exc:
-        bind_errors.append({"step": "directPika", "error": str(exc)})
+        host_result = publish_with_host_container()
+        results = host_result.get("routingKeys", [])
+        fallback = "docker-host-pika"
+    except Exception as host_exc:
+        bind_errors.append({"step": "dockerHostPika", "error": str(host_exc)})
 
 if not any(item["ok"] for item in results) and allow_management_publish:
     for routing_key in routing_keys:
@@ -750,13 +645,7 @@ if not any(item["ok"] for item in results) and allow_management_publish:
 cleanup_errors = []
 if cleanup_target_bindings:
     cleanup_items = [item for item in bound_queues if item.get("queue") in set(target_queues)]
-    if os.path.exists(docker_socket):
-        try:
-            cleanup_errors = cleanup_with_docker(cleanup_items)
-        except Exception as exc:
-            cleanup_errors = [{"step": "dockerCleanup", "error": str(exc)}]
-    else:
-        cleanup_errors = cleanup_with_management(cleanup_items)
+    cleanup_errors = cleanup_with_management(cleanup_items)
 
 ok = any(item["ok"] for item in results)
 print(json.dumps({

@@ -14,7 +14,8 @@ scrape_configs:
     static_configs:
       - targets: [node-exporter:9100]
   - job_name: cadvisor
-    scrape_interval: 10s
+    scrape_interval: 30s
+    scrape_timeout: 25s
     static_configs:
       - targets: [cadvisor:8080]
   - job_name: postgres

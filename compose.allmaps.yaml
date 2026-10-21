@@ -26,22 +26,22 @@ x-game-server-preload-env: &game-server-preload-env
   DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES: ${DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES:-0}
 
 x-game-server-env: &game-server-env
-  DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
+  DUNE_RUNTIME_SECRETS_REQUIRED: "true"
   DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
   DUNE_SERVER_STARTUP_EXECCMDS: ${DUNE_SERVER_STARTUP_EXECCMDS:-}
   DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
   DUNE_IGW_BIND_ADDRESS: ${DUNE_IGW_BIND_ADDRESS:-}
   DUNE_DISABLE_MULTIHOME: ${DUNE_DISABLE_MULTIHOME:-false}
+  DUNE_SERVER_CUSTOM_SETTINGS_PATH: ${DUNE_SERVER_CUSTOM_SETTINGS_PATH:-/workspace/config/UserServerCustomSettings.ini}
+  DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED:-false}
+  DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER: ${DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER:-}
+  DUNE_BUILDING_PIECE_LIMIT_MODE: ${DUNE_BUILDING_PIECE_LIMIT_MODE:-server-settings}
   DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
   DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
   DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}
   DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
   DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
   DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
-  DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
   DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
 
 x-game-server-base: &game-server-base
@@ -52,6 +52,11 @@ x-game-server-base: &game-server-base
   environment:
     <<: [*game-server-env, *game-server-preload-env]
     WORLD_NAME: ${WORLD_NAME}
+  secrets:
+    - dune_postgres_password
+    - dune_fls_token
+    - dune_server_commands_auth_token
+    - dune_server_login_password
   depends_on:
     - postgres
     - admin-rmq
@@ -60,14 +65,11 @@ x-game-server-base: &game-server-base
 x-game-server-command:
   run: &cmd-run /workspace/scripts/run_server_safe.sh
   farm-region: &cmd-farm-region -FarmRegion=${WORLD_REGION}
-  fls-token: &cmd-fls-token -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
   fls-env: &cmd-fls-env -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
-  server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
   datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_DATACENTER_ID}
   db-host: &cmd-db-host -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
   db-user: &cmd-db-user -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
-  db-password: &cmd-db-password -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
   rmq-tls: &cmd-rmq-tls -RMQGameTlsEnabled=true
   external-address: &cmd-external-address -ExternalAddress=${EXTERNAL_ADDRESS}
   rmq-game-host: &cmd-rmq-game-host --RMQGameHostname=game-rmq
@@ -79,7 +81,7 @@ x-game-server-command:
 services:
   lostharvest-ecolab-a:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_EcolabA/DLC_Story_LostHarvest_EcolabA.DLC_Story_LostHarvest_EcolabA, -Port=7786, -IGWPort=7897, -PartitionIndex=10]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_EcolabA/DLC_Story_LostHarvest_EcolabA.DLC_Story_LostHarvest_EcolabA, -Port=7786, -IGWPort=7897, -PartitionIndex=10]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.19, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7786:7786/udp", "7897:7897/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/lostharvest-ecolab-a:/home/dune/server/DuneSandbox/Saved"]
@@ -87,7 +89,7 @@ services:
 
   lostharvest-ecolab-b:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_EcolabB/DLC_Story_LostHarvest_EcolabB.DLC_Story_LostHarvest_EcolabB, -Port=7787, -IGWPort=7898, -PartitionIndex=11]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_EcolabB/DLC_Story_LostHarvest_EcolabB.DLC_Story_LostHarvest_EcolabB, -Port=7787, -IGWPort=7898, -PartitionIndex=11]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.20, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7787:7787/udp", "7898:7898/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/lostharvest-ecolab-b:/home/dune/server/DuneSandbox/Saved"]
@@ -95,7 +97,7 @@ services:
 
   lostharvest-forgottenlab:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_ForgottenLab/DLC_Story_LostHarvest_ForgottenLab.DLC_Story_LostHarvest_ForgottenLab, -Port=7788, -IGWPort=7899, -PartitionIndex=12]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C2/Maps/DLC_Story_LostHarvest/DLC_Story_LostHarvest_ForgottenLab/DLC_Story_LostHarvest_ForgottenLab.DLC_Story_LostHarvest_ForgottenLab, -Port=7788, -IGWPort=7899, -PartitionIndex=12]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.21, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7788:7788/udp", "7899:7899/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/lostharvest-forgottenlab:/home/dune/server/DuneSandbox/Saved"]
@@ -103,7 +105,7 @@ services:
 
   art-of-kanly:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/ArtOfKanly/Story_ArtOfKanly.Story_ArtOfKanly, -Port=7789, -IGWPort=7900, -PartitionIndex=13]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/ArtOfKanly/Story_ArtOfKanly.Story_ArtOfKanly, -Port=7789, -IGWPort=7900, -PartitionIndex=13]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.22, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7789:7789/udp", "7900:7900/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/art-of-kanly:/home/dune/server/DuneSandbox/Saved"]
@@ -111,7 +113,7 @@ services:
 
   dungeon-hephaestus:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/HephaestusRevisit/CB_Dungeon_Hephaestus/CB_Dungeon_Hephaestus.CB_Dungeon_Hephaestus, -Port=7790, -IGWPort=7901, -PartitionIndex=14]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/HephaestusRevisit/CB_Dungeon_Hephaestus/CB_Dungeon_Hephaestus.CB_Dungeon_Hephaestus, -Port=7790, -IGWPort=7901, -PartitionIndex=14]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.23, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7790:7790/udp", "7901:7901/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/dungeon-hephaestus:/home/dune/server/DuneSandbox/Saved"]
@@ -119,7 +121,7 @@ services:
 
   dungeon-oldcarthag:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/OldCarthagRevisit/CB_Dungeon_OldCarthag/CB_Dungeon_OldCarthag.CB_Dungeon_OldCarthag, -Port=7791, -IGWPort=7902, -PartitionIndex=15]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/OldCarthagRevisit/CB_Dungeon_OldCarthag/CB_Dungeon_OldCarthag.CB_Dungeon_OldCarthag, -Port=7791, -IGWPort=7902, -PartitionIndex=15]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.24, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7791:7791/udp", "7902:7902/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/dungeon-oldcarthag:/home/dune/server/DuneSandbox/Saved"]
@@ -127,7 +129,7 @@ services:
 
   faction-outpost-atre:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/Story_Faction_Outpost_Atre/Story_Faction_Outpost_Atre.Story_Faction_Outpost_Atre, -Port=7792, -IGWPort=7903, -PartitionIndex=16]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/Story_Faction_Outpost_Atre/Story_Faction_Outpost_Atre.Story_Faction_Outpost_Atre, -Port=7792, -IGWPort=7903, -PartitionIndex=16]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.25, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7792:7792/udp", "7903:7903/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/faction-outpost-atre:/home/dune/server/DuneSandbox/Saved"]
@@ -135,7 +137,7 @@ services:
 
   faction-outpost-hark:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/Story_Faction_Outpost_Hark/Story_Faction_Outpost_Hark.Story_Faction_Outpost_Hark, -Port=7793, -IGWPort=7904, -PartitionIndex=17]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/Story_Faction_Outpost_Hark/Story_Faction_Outpost_Hark.Story_Faction_Outpost_Hark, -Port=7793, -IGWPort=7904, -PartitionIndex=17]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.26, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7793:7793/udp", "7904:7904/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/faction-outpost-hark:/home/dune/server/DuneSandbox/Saved"]
@@ -143,7 +145,7 @@ services:
 
   heighliner-dungeon:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/FallenLight_HighlinerDungeon/Story_HeighlinerDungeon.Story_HeighlinerDungeon, -Port=7794, -IGWPort=7905, -PartitionIndex=18]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/DLC/B1C3/Maps/MainStory_Chapter3/FallenLight_HighlinerDungeon/Story_HeighlinerDungeon.Story_HeighlinerDungeon, -Port=7794, -IGWPort=7905, -PartitionIndex=18]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.27, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7794:7794/udp", "7905:7905/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/heighliner-dungeon:/home/dune/server/DuneSandbox/Saved"]
@@ -151,7 +153,7 @@ services:
 
   ecolab-green-089:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_089/CB_Ecolab_Bronze_Green_089.CB_Ecolab_Bronze_Green_089, -Port=7795, -IGWPort=7906, -PartitionIndex=19]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_089/CB_Ecolab_Bronze_Green_089.CB_Ecolab_Bronze_Green_089, -Port=7795, -IGWPort=7906, -PartitionIndex=19]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.28, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7795:7795/udp", "7906:7906/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/ecolab-green-089:/home/dune/server/DuneSandbox/Saved"]
@@ -159,7 +161,7 @@ services:
 
   ecolab-green-152:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_152/CB_Ecolab_Bronze_Green_152.CB_Ecolab_Bronze_Green_152, -Port=7796, -IGWPort=7907, -PartitionIndex=20]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_152/CB_Ecolab_Bronze_Green_152.CB_Ecolab_Bronze_Green_152, -Port=7796, -IGWPort=7907, -PartitionIndex=20]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.29, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7796:7796/udp", "7907:7907/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/ecolab-green-152:/home/dune/server/DuneSandbox/Saved"]
@@ -167,7 +169,7 @@ services:
 
   ecolab-green-024:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_024/CB_Ecolab_Bronze_Green_024.CB_Ecolab_Bronze_Green_024, -Port=7797, -IGWPort=7908, -PartitionIndex=21]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_024/CB_Ecolab_Bronze_Green_024.CB_Ecolab_Bronze_Green_024, -Port=7797, -IGWPort=7908, -PartitionIndex=21]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.30, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7797:7797/udp", "7908:7908/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/ecolab-green-024:/home/dune/server/DuneSandbox/Saved"]
@@ -175,7 +177,7 @@ services:
 
   ecolab-green-195:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_195/CB_Ecolab_Bronze_Green_195.CB_Ecolab_Bronze_Green_195, -Port=7798, -IGWPort=7909, -PartitionIndex=22]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_195/CB_Ecolab_Bronze_Green_195.CB_Ecolab_Bronze_Green_195, -Port=7798, -IGWPort=7909, -PartitionIndex=22]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.31, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7798:7798/udp", "7909:7909/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/ecolab-green-195:/home/dune/server/DuneSandbox/Saved"]
@@ -183,7 +185,7 @@ services:
 
   ecolab-green-136:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_136/CB_Ecolab_Bronze_Green_136.CB_Ecolab_Bronze_Green_136, -Port=7799, -IGWPort=7910, -PartitionIndex=23]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Ecolabs/Bronze/Greenhouse/Ecolab_Bronze_Green_136/CB_Ecolab_Bronze_Green_136.CB_Ecolab_Bronze_Green_136, -Port=7799, -IGWPort=7910, -PartitionIndex=23]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.32, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7799:7799/udp", "7910:7910/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/ecolab-green-136:/home/dune/server/DuneSandbox/Saved"]
@@ -191,7 +193,7 @@ services:
 
   overland-m-01:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_01/CB_Overland_M_01.CB_Overland_M_01, -Port=7800, -IGWPort=7911, -PartitionIndex=24]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_01/CB_Overland_M_01.CB_Overland_M_01, -Port=7800, -IGWPort=7911, -PartitionIndex=24]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.33, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7800:7800/udp", "7911:7911/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/overland-m-01:/home/dune/server/DuneSandbox/Saved"]
@@ -199,7 +201,7 @@ services:
 
   overland-s-04:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_04/CB_Overland_S_04.CB_Overland_S_04, -Port=7801, -IGWPort=7912, -PartitionIndex=25]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_04/CB_Overland_S_04.CB_Overland_S_04, -Port=7801, -IGWPort=7912, -PartitionIndex=25]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.34, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7801:7801/udp", "7912:7912/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/overland-s-04:/home/dune/server/DuneSandbox/Saved"]
@@ -207,7 +209,7 @@ services:
 
   overland-s-06:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_06/CB_Overland_S_06.CB_Overland_S_06, -Port=7802, -IGWPort=7913, -PartitionIndex=26]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_06/CB_Overland_S_06.CB_Overland_S_06, -Port=7802, -IGWPort=7913, -PartitionIndex=26]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.35, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7802:7802/udp", "7913:7913/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/overland-s-06:/home/dune/server/DuneSandbox/Saved"]
@@ -215,7 +217,7 @@ services:
 
   bandit-fortress:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps_Story/BanditFortress01/CB_Story_BanditFortress01.CB_Story_BanditFortress01, -Port=7803, -IGWPort=7914, -PartitionIndex=27]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps_Story/BanditFortress01/CB_Story_BanditFortress01.CB_Story_BanditFortress01, -Port=7803, -IGWPort=7914, -PartitionIndex=27]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.36, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7803:7803/udp", "7914:7914/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/bandit-fortress:/home/dune/server/DuneSandbox/Saved"]
@@ -223,7 +225,7 @@ services:
 
   overland-s-07:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_07/CB_Overland_S_07.CB_Overland_S_07, -Port=7804, -IGWPort=7915, -PartitionIndex=28]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/Overland_S_07/CB_Overland_S_07.CB_Overland_S_07, -Port=7804, -IGWPort=7915, -PartitionIndex=28]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.37, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7804:7804/udp", "7915:7915/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/overland-s-07:/home/dune/server/DuneSandbox/Saved"]
@@ -231,7 +233,7 @@ services:
 
   overland-s-08:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/CB_Overland_S_08/CB_Overland_S_08.CB_Overland_S_08, -Port=7805, -IGWPort=7916, -PartitionIndex=29]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/OverlandMaps/CB_Overland_S_08/CB_Overland_S_08.CB_Overland_S_08, -Port=7805, -IGWPort=7916, -PartitionIndex=29]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.38, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7805:7805/udp", "7916:7916/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/overland-s-08:/home/dune/server/DuneSandbox/Saved"]
@@ -239,7 +241,7 @@ services:
 
   dungeon-thepit:
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Dungeon_ThePit/CB_Dungeon_ThePit.CB_Dungeon_ThePit, -Port=7806, -IGWPort=7917, -PartitionIndex=30]
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Dungeons/Dungeon_ThePit/CB_Dungeon_ThePit.CB_Dungeon_ThePit, -Port=7806, -IGWPort=7917, -PartitionIndex=30]
     environment: {<<: [*game-server-env, *game-server-preload-env], POD_IP: 172.31.240.39, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}"}
     ports: ["7806:7806/udp", "7917:7917/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/dungeon-thepit:/home/dune/server/DuneSandbox/Saved"]
@@ -249,7 +251,12 @@ services:
     # Internal service id is legacy. Partition 31 is the PVE Hardcore Deep Desert.
     profiles: ["disabled-deep-desert-pvp"]
     <<: *game-server-base
-    command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Arrakis/DeepDesert_1/DeepDesert_1.DeepDesert_1, -Port=7807, -IGWPort=7918, -PartitionIndex=31]
+    labels:
+      dune.map.dimension-index: "1"
+      dune.map.partition-label: "02 PVE Hardcore"
+      dune.map.enabled-by-partition-count: "true"
+      dune.map.remove-when-disabled: "true"
+    command: [*cmd-run, *cmd-farm-region, *cmd-fls-env, *cmd-server-name, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Arrakis/DeepDesert_1/DeepDesert_1.DeepDesert_1, -Port=7807, -IGWPort=7918, -PartitionIndex=31]
     environment:
       <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.43
@@ -258,10 +265,14 @@ services:
       WORLD_NAME: ${WORLD_NAME}
       DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-pvp.ini
       DUNE_USERENGINE_CONFIG_PATH: /workspace/config/UserEngine.deep-desert-pvp.ini
+      DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.deep-desert-pvp.ini
+      DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED:-false}
+      DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER: ${DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER:-}
+      DUNE_BUILDING_PIECE_LIMIT_MODE: ${DUNE_BUILDING_PIECE_LIMIT_MODE:-server-settings}
       DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
       DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
       DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
-      DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-all}
+      DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
       DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
       DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
       DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: "true"

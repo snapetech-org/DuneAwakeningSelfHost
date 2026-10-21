@@ -154,9 +154,13 @@ For remote hourly snapshots from the remote standby:
 ./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
-The timer runs hourly and keeps `DUNE_REPLICA_SNAPSHOT_KEEP_HOURS` hours of
-remote dumps. The default is 48 hours. Dumps are written on the remote host under
-`/srv/dune-postgres-replica/snapshots` when using the example path.
+The helper streams the custom-format dump over SSH and stores it locally under
+`backups/replica-snapshots`. Put that path on the intended backup filesystem;
+`DUNE_REPLICA_SNAPSHOT_ROOT` can select another local path. The timer requires
+the filesystem containing the snapshot path before it runs. It keeps
+`DUNE_REPLICA_SNAPSHOT_KEEP_HOURS` hours of top-level dumps (48 by default),
+across database names, so a database-version change cannot strand old dumps on
+the replica host. Nested archive directories are preserved.
 
 The installed oneshot service runs as the installing local user by default so
 SSH uses that user's configured keys and host aliases. Override with

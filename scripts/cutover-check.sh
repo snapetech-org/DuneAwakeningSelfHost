@@ -19,8 +19,8 @@ external_address="${EXTERNAL_ADDRESS:-$(read_env EXTERNAL_ADDRESS)}"
 game_rmq_public_host="${GAME_RMQ_PUBLIC_HOST:-$(read_env GAME_RMQ_PUBLIC_HOST)}"
 game_rmq_public_host="${game_rmq_public_host:-$external_address}"
 game_rmq_port="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"; game_rmq_port="${game_rmq_port:-31982}"
-game_udp_range="${GAME_UDP_PORT_RANGE:-$(read_env GAME_UDP_PORT_RANGE)}"; game_udp_range="${game_udp_range:-7777:7810}"
-igw_udp_range="${IGW_UDP_PORT_RANGE:-$(read_env IGW_UDP_PORT_RANGE)}"; igw_udp_range="${igw_udp_range:-7888:7918}"
+game_udp_range="${GAME_UDP_PORT_RANGE:-$(read_env GAME_UDP_PORT_RANGE)}"; game_udp_range="${game_udp_range:-7777:7871}"
+igw_udp_range="${IGW_UDP_PORT_RANGE:-$(read_env IGW_UDP_PORT_RANGE)}"; igw_udp_range="${igw_udp_range:-7888:7982}"
 
 printf '== cutover env ==\n'
 printf 'EXTERNAL_ADDRESS=%s\n' "${external_address:-unset}"

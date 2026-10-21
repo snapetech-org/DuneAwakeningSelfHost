@@ -1,0 +1,15 @@
+[Unit]
+Description=Constrained Dune map-restart API socket
+Before=docker.service
+
+[Socket]
+ListenStream=/run/dune-restart-api/restart.sock
+SocketUser=DUNE_SERVICE_USER_PLACEHOLDER
+SocketGroup=DUNE_SERVICE_GROUP_PLACEHOLDER
+SocketMode=0666
+DirectoryMode=0700
+RemoveOnStop=true
+Service=dune-restart-api.service
+
+[Install]
+WantedBy=sockets.target

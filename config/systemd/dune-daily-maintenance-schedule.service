@@ -5,7 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-TimeoutStartSec=30min
+User=keith
+Group=keith
+StateDirectory=dune-hotfix-auto-update
+StateDirectoryMode=0750
+TimeoutStartSec=45min
 WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=DOCKER_CONFIG=/home/keith/.docker
+Environment=DUNE_HOTFIX_UPDATE_LOCK_FILE=/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock
 Environment=DUNE_ENV_FILE=/path/to/DuneAwakeningSelfHost/.env
 ExecStart=/path/to/DuneAwakeningSelfHost/scripts/schedule-daily-maintenance.sh

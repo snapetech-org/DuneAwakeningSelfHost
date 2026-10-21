@@ -2,6 +2,7 @@
 Description=Dune remote Postgres replica snapshot
 After=network-online.target
 Wants=network-online.target
+RequiresMountsFor=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/replica-snapshots
 
 [Service]
 Type=oneshot
@@ -9,4 +10,5 @@ User=dune
 Group=dune
 WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
 Environment=DUNE_REPLICA_SNAPSHOT_KEEP_HOURS=48
+Environment=DUNE_REPLICA_SNAPSHOT_ROOT=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/replica-snapshots
 ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/replica-snapshot.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env

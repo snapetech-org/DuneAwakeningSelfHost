@@ -6,7 +6,10 @@ ConditionPathExists=/path/to/DuneAwakeningSelfHost/backups/admin-panel/update-re
 
 [Service]
 Type=oneshot
+User=keith
+Group=keith
 WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=DOCKER_CONFIG=/home/keith/.docker
 Environment=DUNE_UPDATE_REBOOT_HOST=kspls0
 ExecStart=/path/to/DuneAwakeningSelfHost/scripts/update-reboot-resume.sh resume /path/to/DuneAwakeningSelfHost/.env
 TimeoutStartSec=45min

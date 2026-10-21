@@ -14,7 +14,16 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
-db=dune_sb_1_4_0_0
+catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$catalog_script" >&2
+  exit 1
+fi
+map_catalog_json="$("$catalog_script" "$env_file" --write-cache)"
+if [[ -z "$map_catalog_json" ]]; then
+  printf 'refusing to seed world partitions from an empty map catalog\n' >&2
+  exit 1
+fi
 backup_dir=backups/partition-surgery
 
 read_env() {
@@ -24,15 +33,9 @@ read_env() {
   printf '%s' "$value"
 }
 
-partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
-partition_count="${partition_count:-30}"
-case "$partition_count" in
-  30|31) ;;
-  *)
-    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
-    exit 2
-    ;;
-esac
+db="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
+db="${db:-$(read_env DUNE_DB_NAME)}"
+db="${db:-dune_sb_1_4_0_0}"
 
 case "$backup_dir" in
   backups/*) ;;
@@ -55,101 +58,76 @@ backup_file="$backup_dir/world-partitions-before-full-world-$(date -u +%Y%m%dT%H
 
 printf 'wrote backup: %s\n' "$backup_file"
 
-"${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -v partition_count="$partition_count" <<'SQL'
+"${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -v "map_catalog=$map_catalog_json" <<'SQL'
 begin;
 
-with desired(partition_id, map, dimension_index, label) as (
-  values
-    (1, 'Survival_1', 0, null),
-    (2, 'Overmap', 0, null),
-    (3, 'SH_Arrakeen', 0, null),
-    (4, 'SH_HarkoVillage', 0, null),
-    (5, 'CB_Story_Hephaestus', 0, null),
-    (6, 'CB_Story_Ecolab_Carthag', 0, null),
-    (7, 'CB_Story_WaterFatManor', 0, null),
-    (8, 'DeepDesert_1', 0, '01 Recommended PVE Casual'),
-    (9, 'Story_ProcesVerbal', 0, null),
-    (10, 'DLC_Story_LostHarvest_EcolabA', 0, null),
-    (11, 'DLC_Story_LostHarvest_EcolabB', 0, null),
-    (12, 'DLC_Story_LostHarvest_ForgottenLab', 0, null),
-    (13, 'Story_ArtOfKanly', 0, null),
-    (14, 'CB_Dungeon_Hephaestus', 0, null),
-    (15, 'CB_Dungeon_OldCarthag', 0, null),
-    (16, 'Story_Faction_Outpost_Atre', 0, null),
-    (17, 'Story_Faction_Outpost_Hark', 0, null),
-    (18, 'Story_HeighlinerDungeon', 0, null),
-    (19, 'CB_Ecolab_Bronze_Green_089', 0, null),
-    (20, 'CB_Ecolab_Bronze_Green_152', 0, null),
-    (21, 'CB_Ecolab_Bronze_Green_024', 0, null),
-    (22, 'CB_Ecolab_Bronze_Green_195', 0, null),
-    (23, 'CB_Ecolab_Bronze_Green_136', 0, null),
-    (24, 'CB_Overland_M_01', 0, null),
-    (25, 'CB_Overland_S_04', 0, null),
-    (26, 'CB_Overland_S_06', 0, null),
-    (27, 'CB_Story_BanditFortress01', 0, null),
-    (28, 'CB_Overland_S_07', 0, null),
-    (29, 'CB_Overland_S_08', 0, null),
-    (30, 'CB_Dungeon_ThePit', 0, null),
-    (31, 'DeepDesert_1', 1, '02 PVE Hardcore')
-),
+create temp table dune_map_catalog_desired on commit drop as
+select partition_id, map, dimension_index, label
+from jsonb_to_recordset((:'map_catalog'::jsonb) -> 'maps') as entry(
+    partition_id integer,
+    map text,
+    dimension_index integer,
+    label text,
+    active boolean,
+    remove_when_disabled boolean
+  )
+where active;
+
+create temp table dune_map_catalog_disabled on commit drop as
+select partition_id, map, dimension_index
+from jsonb_to_recordset((:'map_catalog'::jsonb) -> 'maps') as entry(
+  partition_id integer,
+  map text,
+  dimension_index integer,
+  label text,
+  active boolean,
+  remove_when_disabled boolean
+)
+where not active and remove_when_disabled;
+
+with
 definition as (
   select '{"box": {"max_x": 1, "max_y": 1, "min_x": 0, "min_y": 0}, "type": "box2d_array"}'::jsonb as value
 )
 insert into dune.world_partition (partition_id, map, dimension_index, partition_definition, label)
 select d.partition_id, d.map, d.dimension_index, definition.value, d.label
-from desired d
+from dune_map_catalog_desired d
 cross join definition
-where d.partition_id <= :partition_count
-  and not exists (
+where not exists (
     select 1
     from dune.world_partition wp
     where wp.map = d.map
       and wp.dimension_index = d.dimension_index
   );
 
-with desired(partition_id, label) as (
-  values
-    (8, '01 Recommended PVE Casual'),
-    (31, case when :partition_count >= 31 then '02 PVE Hardcore' else null end)
-)
 update dune.world_partition wp
-set label = desired.label
-from desired
-where wp.partition_id = desired.partition_id
-  and desired.label is not null;
+set label = d.label
+from dune_map_catalog_desired d
+where wp.partition_id = d.partition_id
+  and wp.map = d.map
+  and wp.dimension_index = d.dimension_index
+  and d.label is not null;
 
 update dune.actors
 set partition_id = null
-where :partition_count < 31
-  and partition_id in (
-    select partition_id
-    from dune.world_partition
-    where partition_id > :partition_count
-      and map = 'DeepDesert_1'
-      and dimension_index = 1
-  );
-
-delete from dune.world_partition_reset_seed
-where not exists (
-  select 1 from dune.world_partition wp
-  where wp.partition_id = world_partition_reset_seed.partition_id
-)
-or (
-  :partition_count < 31
-  and partition_id in (
-    select partition_id
-    from dune.world_partition
-    where partition_id > :partition_count
-      and map = 'DeepDesert_1'
-      and dimension_index = 1
-  )
+where partition_id in (
+  select wp.partition_id
+  from dune.world_partition wp
+  join dune_map_catalog_disabled d using (partition_id, map, dimension_index)
 );
 
+delete from dune.world_partition_reset_seed seed
+using dune.world_partition wp, dune_map_catalog_disabled d
+where seed.partition_id = wp.partition_id
+  and wp.partition_id = d.partition_id
+  and wp.map = d.map
+  and wp.dimension_index = d.dimension_index;
+
 delete from dune.world_partition wp
-where :partition_count < 31
-  and wp.partition_id > :partition_count
-  and wp.map = 'DeepDesert_1'
-  and wp.dimension_index = 1;
+using dune_map_catalog_disabled d
+where wp.partition_id = d.partition_id
+  and wp.map = d.map
+  and wp.dimension_index = d.dimension_index;
 
 select setval(
   'dune.world_partition_partition_id_seq',

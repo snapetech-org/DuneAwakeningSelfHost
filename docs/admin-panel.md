@@ -324,7 +324,7 @@ server {
   - `POST /api/admin/artificial-exchange`
   Supported actions are `build-catalog`, `check-ready`, `buyer-dry-run`, `settlement-report`, `validate-populator`, `install-buyer-service`, `install-populator-service`, `install-watchdog-timer`, `watchdog-once`, and `start|stop|restart|status:buyer|populator|watchdog`.
 - Typed gameplay knob API at `GET/POST /api/settings/typed-knobs`. Dry-runs are available without the typed-write gate; writes require backups, the global mutation gate, `DUNE_ADMIN_TYPED_KNOBS_ENABLED=true`, and the confirmation phrase `WRITE TYPED KNOBS`.
-- Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays and the validated versioned community-rewards policy, with backups under `backups/admin-panel`.
+- Config editor for selected local config files, including official `UserEngine.ini`, `UserGame.ini`, and 1.5.3+ `UserServerCustomSettings*.ini` overlays plus the validated versioned community-rewards policy, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
@@ -579,7 +579,7 @@ RUN BOOTSTRAP
 {
   "dry_run": true,
   "updates": {
-    "globalMiningMultiplier": "2.5"
+    "gatheringAmount": "2.5"
   }
 }
 ```
@@ -603,14 +603,16 @@ Current typed knobs:
 | ID | File | Section/key | Confidence | Risk |
 | --- | --- | --- | --- | --- |
 | `spiceDeepDesertCaps` | `UserGame.ini` | `[/Script/DuneSandbox.SpiceHarvestingSystem] m_PerMapSystemSettings` | high | medium |
-| `sandstormEnabled` | `UserEngine.ini` | `[ConsoleVariables] Sandstorm.Enabled` | high | low |
+| `pvpMode` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] PVPMode` | high | medium |
+| `gatheringAmount` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] GatheringAmount` | high | low |
+| `sandstormsAllowed` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] bAllowSandstorms` | high | medium |
+| `sandwormsAllowed` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] bAllowSandworms` | high | medium |
+| `buildingRestrictionsEnabled` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] bIsBuildingRestrictionsEnabled` | high | medium |
+| `baseBackupToolTimeRestrictionHours` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] BaseBackupToolTimeRestriction` | high | medium |
+| `landsraadSpecializationXpMultiplier` | `UserServerCustomSettings.ini` | `[/Script/DuneSandbox.UserServerCustomSettings] LandsraadSpecializationXpMultiplier` | high | medium |
 | `sandstormTreasureEnabled` | `UserEngine.ini` | `[ConsoleVariables] Sandstorm.Treasure.Enabled` | moderate | medium |
 | `coriolisAutoSpawnEnabled` | `UserGame.ini` | `[/Script/DuneSandbox.SandStormConfig] m_bCoriolisAutoSpawnEnabled` | high | medium |
-| `globalMiningMultiplier` | `UserEngine.ini` | `[ConsoleVariables] Dune.GlobalMiningOutputMultiplier` | high | low |
-| `vehicleMiningMultiplier` | `UserEngine.ini` | `[ConsoleVariables] Dune.GlobalVehicleMiningOutputMultiplier` | high | low |
 | `pvpResourceMultiplier` | `UserEngine.ini` | `[ConsoleVariables] SecurityZones.PvpResourceMultiplier` | high | low |
-| `forcePvpAllPartitions` | `UserGame.ini` | `[/Script/DuneSandbox.PvpPveSettings] m_bShouldForceEnablePvpOnAllPartitions` | high | medium |
-| `securityZonesEnabled` | `UserGame.ini` | `[/Script/DuneSandbox.SecurityZonesSubsystem] m_bAreSecurityZonesEnabled` | high | medium |
 | `characterRecustomizationCost` | `UserGame.ini` | `[/Script/DuneSandbox.CharacterRecustomizerSubsystem] m_CostAmount` | high | low |
 | `buildingShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_BuildingShelterThreshold` | moderate | experimental |
 | `placeableShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_PlaceableShelterThreshold` | moderate | experimental |
@@ -1701,7 +1703,7 @@ docker compose ps admin-chat-commands
 docker compose exec -T admin-chat-commands /workspace/scripts/admin-chat-commands.py --healthcheck
 ```
 
-The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped`, has a Docker healthcheck for the command queue consumer, and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior. The service runs on host networking and uses the host-published Postgres/RabbitMQ ports for command ingestion and replies, so Paul can recover even when the compose bridge path is degraded.
+The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped` and has a Docker healthcheck for the command queue consumer. Compose injects the settings it needs; the listener does not mount the full `.env` file or Docker socket. Its root filesystem is read-only, all Linux capabilities are dropped, and `no-new-privileges` is enabled; only the backup volume and `/tmp` tmpfs are writable. Replies use `scripts/announce_pika.py` directly instead of starting a temporary Docker publisher. The service runs on host networking and uses the host-published Postgres/RabbitMQ ports for command ingestion and replies, so Paul can recover even when the compose bridge path is degraded. Credentials are still process environment variables and remain visible in Docker container metadata.
 
 ## Scheduled Restarts And Shutdowns
 
@@ -1783,7 +1785,7 @@ DUNE_ADMIN_RESTART_RECOVERY_TIMEOUT_SECONDS=900
 
 The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, and do not expose the admin hostname publicly. If the panel is reachable beyond a trusted local admin surface, enable `DUNE_ADMIN_REQUIRE_TOKEN=true`. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
 
-For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate --no-deps`. When the admin image has no Docker CLI, the socket fallback starts a short-lived privileged `docker:27.5.1-cli` helper container with the repo and Docker socket mounted, then runs host-side Compose from that helper. It also runs `scripts/seed-gateway-neighbor.sh` before and after recreate so gateway's static `172.31.240.40`/`02:42:ac:1f:f0:28` identity is refreshed in Postgres, gateway, RabbitMQ, service-layer, and host bridge neighbor tables. After recreate and seeding, `scripts/restart-post-start-health.sh` waits for Postgres connectivity, re-seeds bridge neighbors, recreates `text-router` if it exited during early startup, and retries `scripts/verify-rmq-auth-path.sh` until the auth and text-router paths are reachable or the timeout expires. This catches the broken state where `admin-rmq` cannot reach `rmq-auth-shim`, `game-rmq` cannot reach `text-router`, or `text-router` exits because it raced Postgres during startup. This means the daily restart schedule applies changed `.env` values and bind-mounted config files during the recreate phase without pulling in excluded dependencies such as Postgres or RabbitMQ. Keep `DUNE_RESTART_COMPOSE_IMAGE` available locally on the Docker host; if it is missing, pull it before relying on unattended maintenance. The socket fallback gives stop/restart calls a longer timeout than Docker's graceful stop window so a normal slow shutdown is not misreported as a failed maintenance job.
+For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate --no-deps`. When the admin image has no Docker CLI, the socket fallback starts a short-lived `docker:27.5.1-cli` helper with the repo and Docker socket mounted, then runs host-side Compose from that helper. The helper drops all capabilities except `DAC_OVERRIDE` for owner-only workspace access, enables `no-new-privileges`, and does not share the host PID namespace. It retains host networking and UTS so the production-host guard and router SSH checks work. The Docker socket still grants host-level Docker control. It also runs `scripts/seed-gateway-neighbor.sh` before and after recreate so gateway's static `172.31.240.40`/`02:42:ac:1f:f0:28` identity is refreshed in Postgres, gateway, RabbitMQ, service-layer, and host bridge neighbor tables. After recreate and seeding, `scripts/restart-post-start-health.sh` waits for Postgres connectivity, re-seeds bridge neighbors, recreates `text-router` if it exited during early startup, and retries `scripts/verify-rmq-auth-path.sh` until the auth and text-router paths are reachable or the timeout expires. This catches the broken state where `admin-rmq` cannot reach `rmq-auth-shim`, `game-rmq` cannot reach `text-router`, or `text-router` exits because it raced Postgres during startup. This means the daily restart schedule applies changed `.env` values and bind-mounted config files during the recreate phase without pulling in excluded dependencies such as Postgres or RabbitMQ. Keep `DUNE_RESTART_COMPOSE_IMAGE` available locally on the Docker host; if it is missing, pull it before relying on unattended maintenance. The socket fallback gives stop/restart calls a longer timeout than Docker's graceful stop window so a normal slow shutdown is not misreported as a failed maintenance job.
 
 The host-side daily scheduler uses `scripts/schedule-daily-maintenance.sh`. Run it from cron or systemd before the desired maintenance time; the deployed schedule should call it at 05:30 and create an executed, backed-up, announced `all` restart for 06:00, after Funcom's nightly maintenance window. Install the provided timer with `./scripts/install-daily-maintenance-timer.sh .env`. See [`docs/maintenance-updates.md`](maintenance-updates.md) for the timeline, cadence, and Steam-package update logic.
 
@@ -1879,7 +1881,7 @@ restart fails closed. See [`change-contracts.md`](change-contracts.md).
 - `DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED=false` leaves compatibility discovery and dry-run available while structured augment writes are disabled.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
 - Director GME voice-chat settings also live in `config/director.ini`; recreate Director after changing them.
-- `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
+- `UserEngine.ini`, `UserGame.ini`, and `UserServerCustomSettings*.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
 - Keep `DUNE_ADMIN_AUDIT_LEDGER_ENABLED=true` and `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS=true`; restore the ledger database, HMAC key, and authenticated anchor as one backup unit if verification fails.

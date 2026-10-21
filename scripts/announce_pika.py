@@ -26,7 +26,18 @@ def read_env_file(path):
     return values
 
 
-file_env = read_env_file("/workspace/.env") | read_env_file(".env")
+configured_json = os.environ.get("DUNE_ANNOUNCE_ENV_JSON")
+if configured_json:
+    file_env = json.loads(pathlib.Path(configured_json).read_text(encoding="utf-8"))
+else:
+    configured_env_files = os.environ.get("DUNE_ANNOUNCE_ENV_FILE")
+    if configured_env_files is None:
+        env_paths = ("/workspace/.env", ".env")
+    else:
+        env_paths = tuple(path for path in configured_env_files.split(os.pathsep) if path)
+    file_env = {}
+    for env_path in env_paths:
+        file_env.update(read_env_file(env_path))
 
 
 def env(name, default=""):
@@ -88,7 +99,7 @@ try:
             "m_bUseSpoofedUserName": spoof,
             "m_SpoofedUserNameFrom": {"m_TableId": "", "m_Key": "", "m_UnlocalizedName": spoof_name if spoof else ""},
             "m_FuncomIdFrom": funcom_id,
-            "m_UserNameTo": "",
+            "m_UserNameTo": env("DUNE_ANNOUNCE_CHAT_USER_NAME_TO", ""),
             "m_Message": {
                 "m_UnlocalizedMessage": message,
                 "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},

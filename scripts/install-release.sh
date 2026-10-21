@@ -213,6 +213,8 @@ ln -s -- "$state_root/.env" "$release_dir/.env"
 mutable_configs=(
   UserEngine.ini UserEngine.deep-desert.ini UserEngine.deep-desert-pvp.ini
   UserGame.ini UserGame.deep-desert-coriolis.ini UserGame.deep-desert-pvp.ini
+  UserServerCustomSettings.ini UserServerCustomSettings.survival.ini
+  UserServerCustomSettings.deep-desert-pvp.ini
   director.ini gateway.ini rabbitmq-admin.conf rabbitmq-game.conf admin-ingress.Caddyfile
 )
 for name in "${mutable_configs[@]}"; do

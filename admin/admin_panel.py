@@ -157,7 +157,8 @@ def resolve_compose_files(default="compose.yaml:compose.allmaps.yaml"):
     if current_host and postgres_host and current_host == postgres_host and (ROOT / "compose.failover-standby.yaml").exists():
         add_file(files, "compose.failover-standby.yaml")
     building_enabled = os.environ.get("DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED") or env_file_value("DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED")
-    if building_enabled == "true" and (ROOT / "compose.building-piece-limit.yaml").exists():
+    building_mode = os.environ.get("DUNE_BUILDING_PIECE_LIMIT_MODE") or env_file_value("DUNE_BUILDING_PIECE_LIMIT_MODE") or "server-settings"
+    if building_enabled == "true" and building_mode == "pak" and (ROOT / "compose.building-piece-limit.yaml").exists():
         add_file(files, "compose.building-piece-limit.yaml")
     host_limits = os.environ.get("DUNE_HOST_LIMITS_COMPOSE_FILE") or env_file_value("DUNE_HOST_LIMITS_COMPOSE_FILE")
     if host_limits and (ROOT / host_limits).exists():
@@ -233,7 +234,20 @@ DATABASE = (
     or os.environ.get("DUNE_DB_NAME")
     or "dune_sb_1_4_0_0"
 )
-ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
+
+
+def secret_env(name, default=""):
+    file_path = os.environ.get(f"{name}_FILE", "").strip()
+    if file_path:
+        try:
+            return pathlib.Path(file_path).read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as exc:
+            print(f"WARNING: {name}_FILE could not be read ({type(exc).__name__}); {name} is disabled", file=sys.stderr)
+            return ""
+    return os.environ.get(name, default)
+
+
+ADMIN_TOKEN = secret_env("DUNE_ADMIN_TOKEN")
 ADMIN_REQUIRE_TOKEN = os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "true").lower() in ("1", "true", "yes", "on")
 RBAC_ENABLED = os.environ.get("DUNE_ADMIN_RBAC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ADMIN_ACCESS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_ACCESS_FILE", str(CONFIG_ROOT / "admin-access.json")))
@@ -1670,16 +1684,101 @@ def world_partition_count():
         return 30
 
 
-GAME_MAP_SERVICES = [
-    "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
-    "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
-    "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
-    "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
-    "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
-    "overland-s-07", "overland-s-08", "dungeon-thepit",
+FALLBACK_GAME_MAPS = [
+    ("survival", 1), ("overmap", 2), ("arrakeen", 3), ("harko-village", 4),
+    ("testing-hephaestus", 5), ("testing-carthag", 6), ("testing-waterfat", 7),
+    ("deep-desert", 8), ("proces-verbal", 9), ("lostharvest-ecolab-a", 10),
+    ("lostharvest-ecolab-b", 11), ("lostharvest-forgottenlab", 12), ("art-of-kanly", 13),
+    ("dungeon-hephaestus", 14), ("dungeon-oldcarthag", 15), ("faction-outpost-atre", 16),
+    ("faction-outpost-hark", 17), ("heighliner-dungeon", 18), ("ecolab-green-089", 19),
+    ("ecolab-green-152", 20), ("ecolab-green-024", 21), ("ecolab-green-195", 22),
+    ("ecolab-green-136", 23), ("overland-m-01", 24), ("overland-s-04", 25),
+    ("overland-s-06", 26), ("bandit-fortress", 27), ("overland-s-07", 28),
+    ("overland-s-08", 29), ("dungeon-thepit", 30),
 ]
-if world_partition_count() == 31 and "deep-desert-pvp" not in GAME_MAP_SERVICES:
-    GAME_MAP_SERVICES.append("deep-desert-pvp")
+if world_partition_count() >= 31:
+    FALLBACK_GAME_MAPS.append(("deep-desert-pvp", 31))
+
+MAP_CATALOG_FILE = pathlib.Path(os.environ.get("DUNE_MAP_CATALOG_FILE", str(BACKUP_ROOT / "map-catalog.json")))
+MAP_CATALOG_CACHE_STATE = {"mtime_ns": None}
+GAME_MAP_CATALOG = None
+GAME_MAP_SERVICES = [service for service, _partition in FALLBACK_GAME_MAPS]
+GAME_MAP_PARTITIONS = {service: partition for service, partition in FALLBACK_GAME_MAPS}
+GAME_MAP_SERVICE_BY_PARTITION = {partition: service for service, partition in FALLBACK_GAME_MAPS}
+
+
+def refresh_game_map_catalog_cache(force=False):
+    """Reload the host-generated, Compose-derived map roster when it changes."""
+    global GAME_MAP_CATALOG, GAME_MAP_SERVICES, GAME_MAP_PARTITIONS
+    global GAME_MAP_SERVICE_BY_PARTITION, ALL_RESTART_SAFE_SERVICES
+    try:
+        mtime_ns = MAP_CATALOG_FILE.stat().st_mtime_ns
+    except OSError:
+        return False
+    if not force and mtime_ns == MAP_CATALOG_CACHE_STATE.get("mtime_ns"):
+        return False
+    try:
+        catalog = json.loads(MAP_CATALOG_FILE.read_text(encoding="utf-8"))
+        if catalog.get("schema_version") != 1 or not isinstance(catalog.get("maps"), list):
+            raise ValueError("unsupported map catalog schema")
+        entries = sorted(
+            (entry for entry in catalog["maps"] if entry.get("active")),
+            key=lambda entry: (int(entry["partition_id"]), str(entry["service"])),
+        )
+        services = [str(entry["service"]) for entry in entries]
+        partitions = [int(entry["partition_id"]) for entry in entries]
+        if not services or len(services) != len(set(services)) or len(partitions) != len(set(partitions)):
+            raise ValueError("map catalog has an empty or duplicate active roster")
+        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) for service in services):
+            raise ValueError("map catalog contains an invalid service name")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        MAP_CATALOG_CACHE_STATE["mtime_ns"] = mtime_ns
+        print(f"ignoring invalid map catalog cache {MAP_CATALOG_FILE}: {exc}", file=sys.stderr)
+        return False
+
+    GAME_MAP_CATALOG = catalog
+    GAME_MAP_SERVICES = services
+    GAME_MAP_PARTITIONS = {str(entry["service"]): int(entry["partition_id"]) for entry in entries}
+    GAME_MAP_SERVICE_BY_PARTITION = {int(entry["partition_id"]): str(entry["service"]) for entry in entries}
+    MAP_CATALOG_CACHE_STATE["mtime_ns"] = mtime_ns
+
+    if "AUTOSCALER_ALWAYS_ON_SERVICES" in globals():
+        AUTOSCALER_ALWAYS_ON_SERVICES = {
+            service.strip()
+            for service in os.environ.get("DUNE_AUTOSCALER_ALWAYS_ON_SERVICES", "survival,overmap").split(",")
+            if service.strip() in GAME_MAP_SERVICES
+        }
+        AUTOSCALER_SIMULATION_REQUIRED_SERVICES = {
+            service.strip()
+            for service in os.environ.get("DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES", "survival").split(",")
+            if service.strip() in GAME_MAP_SERVICES
+        }
+    if "AUTOSCALER_BALANCED_MAX_WARM_MAPS" in globals():
+        try:
+            AUTOSCALER_BALANCED_MAX_WARM_MAPS = max(
+                0, min(int(os.environ.get("DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS", "4")), len(GAME_MAP_SERVICES))
+            )
+        except ValueError:
+            AUTOSCALER_BALANCED_MAX_WARM_MAPS = min(4, len(GAME_MAP_SERVICES))
+    if "ALL_RESTART_SAFE_SERVICES" in globals():
+        ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
+    if "RESTART_TARGETS" in globals():
+        RESTART_TARGETS["all"]["services"] = ALL_RESTART_SAFE_SERVICES
+        RESTART_TARGETS["game-all"]["services"] = GAME_MAP_SERVICES
+        for service in tuple(DYNAMIC_MAP_RESTART_TARGETS):
+            if service not in GAME_MAP_SERVICES:
+                RESTART_TARGETS.pop(service, None)
+        DYNAMIC_MAP_RESTART_TARGETS.clear()
+        for entry in entries:
+            service = str(entry["service"])
+            if service not in RESTART_TARGETS:
+                label = str(entry.get("label") or entry.get("map") or service.replace("-", " ").title())
+                RESTART_TARGETS[service] = {"label": label, "services": [service]}
+                DYNAMIC_MAP_RESTART_TARGETS.add(service)
+    return True
+
+
+refresh_game_map_catalog_cache(force=True)
 
 
 def env_bool(name, default=False):
@@ -1758,6 +1857,15 @@ RESTART_TARGETS = {
     "harko-village": {"label": "Harko Village", "services": ["harko-village"]},
     "deep-desert": {"label": "Deep Desert", "services": ["deep-desert"]},
 }
+DYNAMIC_MAP_RESTART_TARGETS = set()
+for _map_entry in (GAME_MAP_CATALOG or {}).get("maps", []):
+    if not _map_entry.get("active"):
+        continue
+    _map_service = str(_map_entry["service"])
+    if _map_service not in RESTART_TARGETS:
+        _map_label = str(_map_entry.get("label") or _map_entry.get("map") or _map_service.replace("-", " ").title())
+        RESTART_TARGETS[_map_service] = {"label": _map_label, "services": [_map_service]}
+        DYNAMIC_MAP_RESTART_TARGETS.add(_map_service)
 
 GM_COMMANDS_ENABLED = os.environ.get("DUNE_ADMIN_GM_COMMANDS_ENABLED", "false").lower() == "true"
 GM_COMMAND_PAYLOAD_VERIFIED = os.environ.get("DUNE_GM_COMMAND_PAYLOAD_VERIFIED", "false").lower() == "true"
@@ -1900,6 +2008,9 @@ ALLOWED_CONFIGS = {
     "rabbitmq-game.conf": CONFIG_ROOT / "rabbitmq-game.conf",
     "UserEngine.ini": CONFIG_ROOT / "UserEngine.ini",
     "UserGame.ini": CONFIG_ROOT / "UserGame.ini",
+    "UserServerCustomSettings.ini": CONFIG_ROOT / "UserServerCustomSettings.ini",
+    "UserServerCustomSettings.survival.ini": CONFIG_ROOT / "UserServerCustomSettings.survival.ini",
+    "UserServerCustomSettings.deep-desert-pvp.ini": CONFIG_ROOT / "UserServerCustomSettings.deep-desert-pvp.ini",
 }
 
 DIRECTOR_TRANSFER_RULESETS = (
@@ -1968,14 +2079,16 @@ TYPED_CONFIG_KNOBS = {
         "why": "Caps materialize in dune.spicefield_types and resourcefield_state after map restart.",
         "default": '(("DeepDesert_1", (m_SpiceFieldTypeSettings=(((Name="Small"), (MaxGloballyPrimed=60,MaxGloballyActive=60)),((Name="Medium"), (MaxGloballyPrimed=12,MaxGloballyActive=12)),((Name="Large"), (MaxGloballyPrimed=1,MaxGloballyActive=1))))),("Survival_1", (m_SpiceFieldTypeSettings=(((Name="Small"), (MaxGloballyPrimed=5,MaxGloballyActive=5))))))',
     },
-    "sandstormEnabled": {"label": "Sandstorm enabled", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Sandstorm.Enabled", "type": "bool01", "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1"},
+    "pvpMode": {"label": "PvP mode", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "PVPMode", "type": "choice", "choices": ("Disabled", "Limited", "Full"), "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated server-custom PvP policy. Limited keeps the private-server security-zone behavior.", "default": "Limited"},
+    "gatheringAmount": {"label": "Gathering amount", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "GatheringAmount", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "1.5.3+ client-replicated gathering multiplier for player and vehicle harvesting; per-map overlays may override the shared file.", "default": "1.0"},
+    "sandstormsAllowed": {"label": "Sandstorms allowed", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "bAllowSandstorms", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated sandstorm policy. Coriolis spawn, damage, and cycle fields remain map-specific UserGame settings.", "default": "True"},
+    "sandwormsAllowed": {"label": "Sandworms allowed", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "bAllowSandworms", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated sandworm policy.", "default": "True"},
+    "buildingRestrictionsEnabled": {"label": "Building restrictions enabled", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "bIsBuildingRestrictionsEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated building restriction policy.", "default": "True"},
+    "baseBackupToolTimeRestrictionHours": {"label": "Base backup cooldown (hours)", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "BaseBackupToolTimeRestriction", "type": "float", "min": 0, "max": 1000, "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated sub-fief backup cooldown, expressed in hours.", "default": "10.0"},
+    "landsraadSpecializationXpMultiplier": {"label": "Landsraad specialization XP multiplier", "file": "UserServerCustomSettings.ini", "section": "/Script/DuneSandbox.UserServerCustomSettings", "key": "LandsraadSpecializationXpMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "medium", "why": "1.5.3+ client-replicated Landsraad specialization mission reward multiplier.", "default": "1.0"},
     "sandstormTreasureEnabled": {"label": "Sandstorm treasure enabled", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Sandstorm.Treasure.Enabled", "type": "bool01", "restart": True, "confidence": "moderate", "risk": "medium", "why": "Console variable is present; treasure runtime effect still needs live validation.", "default": "1"},
     "coriolisAutoSpawnEnabled": {"label": "Coriolis auto-spawn", "file": "UserGame.ini", "section": "/Script/DuneSandbox.SandStormConfig", "key": "m_bCoriolisAutoSpawnEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Shipped config key controls Coriolis auto-spawn. Cycle and wipe fields are deliberately excluded.", "default": "False"},
-    "globalMiningMultiplier": {"label": "Player mining multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Dune.GlobalMiningOutputMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1.0"},
-    "vehicleMiningMultiplier": {"label": "Vehicle mining multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Dune.GlobalVehicleMiningOutputMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1.0"},
     "pvpResourceMultiplier": {"label": "PvP resource multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "SecurityZones.PvpResourceMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "2.5"},
-    "forcePvpAllPartitions": {"label": "Force PvP on all partitions", "file": "UserGame.ini", "section": "/Script/DuneSandbox.PvpPveSettings", "key": "m_bShouldForceEnablePvpOnAllPartitions", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped PvP/PvE setting.", "default": "False"},
-    "securityZonesEnabled": {"label": "Security zones enabled", "file": "UserGame.ini", "section": "/Script/DuneSandbox.SecurityZonesSubsystem", "key": "m_bAreSecurityZonesEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped security-zone setting.", "default": "True"},
     "characterRecustomizationCost": {"label": "Character recustomization cost", "file": "UserGame.ini", "section": "/Script/DuneSandbox.CharacterRecustomizerSubsystem", "key": "m_CostAmount", "type": "int", "min": 0, "max": 1000000000, "restart": True, "confidence": "high", "risk": "low", "why": "Shipped CharacterRecustomizerSubsystem Solaris cost. Set 0 to make recustomization free.", "default": "5000"},
     "buildingShelterThreshold": {"label": "Building shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_BuildingShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
     "placeableShelterThreshold": {"label": "Placeable shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_PlaceableShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
@@ -3134,7 +3247,7 @@ def run_restart_command(command, job, phase):
 
 
 def restart_online_snapshot():
-    required_partition_ids = list(range(1, len(GAME_MAP_SERVICES) + 1))
+    required_partition_ids = [GAME_MAP_PARTITIONS[service] for service in GAME_MAP_SERVICES]
     required_services = list(GAME_MAP_SERVICES)
     verification_mode = "full-farm"
     try:
@@ -3149,7 +3262,7 @@ def restart_online_snapshot():
         ]
         if always_on:
             required_services = always_on
-            required_partition_ids = [GAME_MAP_SERVICES.index(service) + 1 for service in always_on]
+            required_partition_ids = [GAME_MAP_PARTITIONS[service] for service in always_on]
             verification_mode = "autoscaler-always-on"
     rows = query("""
         select
@@ -3295,9 +3408,34 @@ def restart_update_preflight(job):
     if target != "all" and policy != "current":
         return {"ok": False, "policy": policy, "error": "targeted restarts cannot change the farm build"}
     if policy == "current":
+        if target == "all":
+            build_check_script = ROOT / "scripts" / "check-steam-update.sh"
+            try:
+                build_check = subprocess.run(
+                    [str(build_check_script), str(ENV_FILE)],
+                    cwd=str(ROOT), env=os.environ.copy(), text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=90, check=False,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False, "policy": policy, "checkSteamUpdate": False,
+                    "error": f"current-build preflight could not verify the staged Steam build; refusing to stop the farm: {exc}",
+                }
+            build_output = (build_check.stdout + build_check.stderr).strip()
+            if build_check.returncode != 0:
+                detail = build_output[:1000] or f"check exited {build_check.returncode}"
+                return {
+                    "ok": False, "policy": policy, "checkSteamUpdate": False,
+                    "error": (
+                        "current-build preflight found an update or could not prove that the loaded images match "
+                        f"the latest staged Steam build; refusing to stop the farm: {detail}"
+                    ),
+                    "output": detail,
+                }
         return {
             "ok": True, "policy": policy, "checkSteamUpdate": False, "steamUpdateMode": "none",
-            "reason": "maintenance is bound to the currently loaded build",
+            "reason": "maintenance is bound to the latest staged Steam build and currently loaded images",
         }
     if policy == "automatic":
         if UPDATE_READINESS_REQUIRE_RECEIPT:
@@ -3484,13 +3622,22 @@ def _execute_restart_locked(job):
     if start_result.get("returncode") == 141 and online_result.get("ok"):
         append_restart_warning(result, "restart start hook returned 141, but farm reported fully online after verification")
     elif not start_result.get("ok"):
-        result["error"] = start_result.get("error") or f"restart start hook failed with return code {start_result.get('returncode')}"
+        start_detail = " ".join(str(start_result.get("output") or "").split())
+        if start_detail:
+            start_detail = start_detail[:900]
+        result["error"] = start_result.get("error") or (
+            f"restart start hook failed with return code {start_result.get('returncode')}"
+            + (f": {start_detail}" if start_detail else "")
+        )
     elif not online_result.get("ok"):
         result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
     elif maintenance_failure:
         result["error"] = maintenance_failure
     backup_output = result["backup"].get("output") if isinstance(result.get("backup"), dict) else ""
-    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), backup_output, update_result.get("output", ""), start_result.get("output", "")] if part)
+    output_parts = [stop_result.get("output", ""), backup_output, update_result.get("output", ""), start_result.get("output", "")]
+    if not start_result.get("ok") and start_result.get("output"):
+        output_parts = [start_result.get("output", ""), stop_result.get("output", ""), backup_output, update_result.get("output", "")]
+    result["output"] = "\n".join(part for part in output_parts if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
         result["output"] = result["output"][:AUDIT_FIELD_LIMIT] + "...[truncated]"
     return result
@@ -4010,7 +4157,7 @@ def docker_container_stats(live_stats=False, services=None, running_only=False):
             "pids": int((stats.get("pids_stats") or {}).get("current") or 0),
         }
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(48, max(len(containers), 1)))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(16, max(len(containers), 1)))
     try:
         future_map = {executor.submit(container_row, container): container for container in containers}
         deadline = time.monotonic() + 4
@@ -4288,8 +4435,8 @@ def autoscaler_player_counts():
     counts = {}
     for row in rows:
         partition_id = int(row.get("partition_id") or 0)
-        if 1 <= partition_id <= len(GAME_MAP_SERVICES):
-            service = GAME_MAP_SERVICES[partition_id - 1]
+        service = GAME_MAP_SERVICE_BY_PARTITION.get(partition_id)
+        if service:
             counts[service] = int(row.get("players") or 0)
     return counts
 
@@ -4502,8 +4649,8 @@ def autoscaler_collect_travel_demand(state, now=None, inventory=None):
         services = []
         for row in partitions:
             partition_id = int(row.get("partition_id") or 0)
-            if 1 <= partition_id <= len(GAME_MAP_SERVICES):
-                service = GAME_MAP_SERVICES[partition_id - 1]
+            service = GAME_MAP_SERVICE_BY_PARTITION.get(partition_id)
+            if service:
                 if state["modes"].get(service, "always-on") == "dynamic":
                     services.append(service)
         services.sort(key=lambda service: inventory.get(service, {}).get("state") == "running")
@@ -4971,7 +5118,7 @@ def db_connect():
         port=int(os.environ.get("DUNE_ADMIN_DB_PORT", "5432")),
         database=DATABASE,
         user=os.environ.get("DUNE_ADMIN_DB_USER", "dune"),
-        password=os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", "")),
+        password=secret_env("DUNE_ADMIN_DB_PASSWORD", secret_env("POSTGRES_DUNE_PASSWORD")),
         connect_timeout=5,
         options="-c statement_timeout=15000",
     )
@@ -7006,6 +7153,12 @@ def validate_typed_knob_value(knob_id, value):
         if lowered not in ("0", "1", "true", "false"):
             raise ValueError(f"{knob_id} must be 0/1 or true/false")
         return "1" if lowered in ("1", "true") else "0"
+    if kind == "choice":
+        rendered = str(value).strip()
+        if rendered not in meta.get("choices", ()):
+            choices = ", ".join(meta.get("choices", ()))
+            raise ValueError(f"{knob_id} must be one of: {choices}")
+        return rendered
     if kind == "float":
         try:
             number = float(str(value).strip())
@@ -9567,12 +9720,13 @@ def collect_capacity_intelligence_maps():
         left join dune.active_server_ids asi on asi.server_id=wp.server_id
         where wp.partition_id = any(%s)
         group by wp.partition_id
-    """, (list(range(1, len(GAME_MAP_SERVICES) + 1)),))
+    """, ([GAME_MAP_PARTITIONS[service] for service in GAME_MAP_SERVICES],))
     readiness = {}
     for row in readiness_rows:
         partition = int(row.get("partition_id") or 0)
-        if 1 <= partition <= len(GAME_MAP_SERVICES):
-            readiness[GAME_MAP_SERVICES[partition - 1]] = bool(row.get("ready"))
+        service = GAME_MAP_SERVICE_BY_PARTITION.get(partition)
+        if service in GAME_MAP_SERVICES:
+            readiness[service] = bool(row.get("ready"))
     now = time.time()
     maps = []
     for service in GAME_MAP_SERVICES:
@@ -12562,6 +12716,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_one_request(self):
         try:
+            refresh_game_map_catalog_cache()
             super().handle_one_request()
         except ConnectionError:
             return
@@ -16408,12 +16563,10 @@ class Handler(BaseHTTPRequestHandler):
     def service_for_partition(self, part):
         partition_id = part.get("partition_id")
         try:
-            index = int(partition_id) - 1
+            partition_id = int(partition_id)
         except (TypeError, ValueError):
             return None
-        if 0 <= index < len(GAME_MAP_SERVICES):
-            return GAME_MAP_SERVICES[index]
-        return None
+        return GAME_MAP_SERVICE_BY_PARTITION.get(partition_id)
 
     def addr_port(self, addr, port):
         if not addr or not port:
@@ -19919,6 +20072,7 @@ INDEX = r"""<!doctype html>
         <h3>Support DASH</h3>
         <p class="muted">Help fund hosting and development.</p>
         <div class="supportLinks">
+          <a class="supportLink" href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer">PayPal</a>
           <a class="supportLink" href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a>
         </div>
       </aside>
@@ -21926,7 +22080,7 @@ async function overview(serial=loadSerial){
   refreshOverviewResources({force:true}).catch(() => {});
   overviewResourceTimer = setInterval(() => {
     if (autoRefresh && current === 'overview') refreshOverviewResources().catch(() => {});
-  }, 5000);
+  }, 15000);
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){
@@ -23666,7 +23820,7 @@ async function settings(serial=loadSerial){
     api('/api/settings/configs')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${artificialExchangePanel(artificialExchange)}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, <code>config/UserGame.ini</code>, or <code>config/UserServerCustomSettings*.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${artificialExchangePanel(artificialExchange)}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveEnv));

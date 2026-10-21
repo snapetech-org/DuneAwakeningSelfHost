@@ -19,7 +19,11 @@ Use `scripts/update-env-file.py` for script-driven changes:
 
 The writer:
 
-- requires an existing regular file and refuses symbolic links;
+- requires an existing regular file and refuses symbolic links by default;
+- `--allow-protected-link` accepts only a link that resolves exactly to
+  `~/.config/dune-selfhost/compose.env`, with the file and parent directory
+  owned by the current user and private from group and other users; it then
+  updates the resolved regular file in place;
 - validates keys, UTF-8, control characters, and a 4 MiB size ceiling;
 - takes an exclusive advisory lock before it reads or renders the file;
 - applies every `--set` argument as one transaction and removes duplicate
@@ -42,7 +46,10 @@ The following runtime paths use the shared writer:
 - the complete feature-parity activation helper;
 - Steam package `DUNE_IMAGE_TAG` pinning, including guarded update/restart;
 - official database patch metadata;
-- initial local environment secret population.
+- initial local environment secret population;
+- map UDP-capacity range changes. The capacity guard accepts only the same
+  protected `.env` link, takes its backup under the shared file lock, and uses
+  the shared writer so the Admin container's bind-mounted inode remains live.
 
 ## Verification
 

@@ -1,6 +1,7 @@
 services:
   survival:
     environment:
+      DUNE_BUILDING_PIECE_LIMIT_MODE: "pak"
       DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
       DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
       DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so

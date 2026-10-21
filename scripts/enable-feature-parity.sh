@@ -83,7 +83,7 @@ mkdir -p "$backup_dir"
 backup="$backup_dir/env-before-enable-$stamp"
 install -m 600 "$env_file" "$backup"
 
-feature_update=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet)
+feature_update=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --allow-protected-link --quiet)
 for key in "${keys[@]}"; do feature_update+=(--set "$key" true); done
 set_value() {
   [[ $# -eq 2 && -n "$1" ]] || { printf 'set_value requires a key and value\n' >&2; exit 2; }

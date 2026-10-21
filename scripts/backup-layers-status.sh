@@ -3,10 +3,23 @@ set -euo pipefail
 
 env_file="${1:-.env}"
 remote="${2:-${POSTGRES_REMOTE_REPLICA_HOST:-}}"
+# Keep the legacy third argument accepted for CLI compatibility.
 remote_root="${3:-${POSTGRES_REMOTE_REPLICA_ROOT:-/srv/dune-postgres-replica}}"
-db="${DUNE_DATABASE:-dune_sb_1_4_0_0}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+db="${DUNE_DATABASE:-$(awk -F= '/^DUNE_DATABASE=/{sub(/^[^=]*=/, ""); print}' "$env_file" 2>/dev/null | tail -1)}"
+db="${db%\"}"
+db="${db#\"}"
+db="${db%\'}"
+db="${db#\'}"
+db="${db:-dune_sb_1_4_0_0}"
 slot="$(awk -F= '/^POSTGRES_REMOTE_REPLICATION_SLOT=/{print $2}' "$env_file" | tail -1)"
 slot="${slot:-dune_standby_remote}"
+snapshot_root="${DUNE_REPLICA_SNAPSHOT_ROOT:-$(awk -F= '/^DUNE_REPLICA_SNAPSHOT_ROOT=/{sub(/^[^=]*=/, ""); print}' "$env_file" 2>/dev/null | tail -1)}"
+snapshot_root="${snapshot_root%\"}"
+snapshot_root="${snapshot_root#\"}"
+snapshot_root="${snapshot_root%\'}"
+snapshot_root="${snapshot_root#\'}"
+snapshot_root="${snapshot_root:-${repo_root}/backups/replica-snapshots}"
 
 if [[ -z "$remote" ]]; then
   printf 'remote host required: %s ENV_FILE REMOTE_HOST [REMOTE_ROOT]\n' "$0" >&2
@@ -28,11 +41,11 @@ printf '\n== remote standby ==\n'
 ssh "$remote" "docker ps --filter name=dune-postgres-replica --format '{{.Names}} {{.Status}}'
 docker exec dune-postgres-replica psql -U dune -d '$db' -c \"select pg_is_in_recovery() as standby, now() - pg_last_xact_replay_timestamp() as replay_delay;\""
 
-printf '\n== layer 2: rolling replica snapshots ==\n'
-ssh "$remote" "find '$remote_root/snapshots' -maxdepth 1 -type f -name 'postgres-${db}-*.dump' -printf '%TY-%Tm-%Td %TH:%TM %s %f\n' | sort | tail -10"
+printf '\n== layer 2: rolling replica snapshots on local storage ==\n'
+find "$snapshot_root" -maxdepth 2 -type f -name 'postgres-*.dump' -printf '%TY-%Tm-%Td %TH:%TM %s %p\n' 2>/dev/null | sort | tail -10 || true
 
 printf '\n== layer 3: local full-state backups ==\n'
-find backups -maxdepth 2 \( -name "postgres-${db}.dump" -o -name "manifest.txt" -o -name "manifest.json" \) -printf '%TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort | tail -20 || true
+find "$repo_root/backups" -maxdepth 4 \( -name "postgres-${db}.dump" -o -name "manifest.txt" -o -name "manifest.json" \) -printf '%TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort | tail -20 || true
 
 printf '\n== timers/services ==\n'
 systemctl is-active dune-postgres-replication-forwarder.service dune-replica-snapshot.timer || true

@@ -63,7 +63,7 @@ backup_dir="${DUNE_AUTOSCALER_CONFIG_BACKUP_DIR:-$repo_root/backups/admin-panel/
 mkdir -p "$backup_dir"
 cp -a "$env_file" "$backup_dir/env-before-$stamp"
 
-update_command=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet)
+update_command=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --allow-protected-link --quiet)
 while IFS= read -r key; do update_command+=(--set "$key" "${values[$key]}"); done < <(printf '%s\n' "${!values[@]}" | sort)
 "${update_command[@]}"
 printf 'configured %s; backup=%s\n' "$profile" "$backup_dir/env-before-$stamp"

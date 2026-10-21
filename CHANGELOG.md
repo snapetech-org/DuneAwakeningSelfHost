@@ -4,17 +4,6 @@ All notable DASH changes are recorded here. Versions follow Semantic Versioning;
 prereleases are used until the clean-host installation contract has been proven
 by operators outside the development environment.
 
-## [0.1.0-beta.2] - 2026-10-03
-
-### Changed
-
-- Removed the PayPal donation option from the README, public status pages, and
-  admin panel while retaining Ko-fi support links.
-
-### Operator impact
-
-- No configuration or service changes are required.
-
 ## [0.1.0-beta.1] - 2026-07-17
 
 ### Added
@@ -42,4 +31,3 @@ by operators outside the development environment.
   operator workstations, not native server targets.
 
 [0.1.0-beta.1]: https://github.com/snapetech/DuneAwakeningSelfHost/releases/tag/v0.1.0-beta.1
-[0.1.0-beta.2]: https://github.com/snapetech/DuneAwakeningSelfHost/releases/tag/v0.1.0-beta.2

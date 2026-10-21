@@ -212,7 +212,7 @@ show_status >"$backup_dir/status.before.txt"
 render_sysctl >"$SYSCTL_CONF"
 
 if [[ "$PERSIST" == true ]]; then
-  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --quiet \
+  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --allow-protected-link --quiet \
     --set DUNE_HOST_TUNING_ENABLED true \
     --set DUNE_HOST_TUNING_NIC_ENABLED "$NIC_ENABLED" \
     --set DUNE_HOST_TUNING_NIC "$nic" \

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -499,7 +501,13 @@ fi
 
 if [[ "$restore_config" == true ]]; then
   printf 'restoring config files from %s\n' "${backup_dir}/config.tgz"
-  tar -xzf "${backup_dir}/config.tgz"
+  # The full backup contains protected secret files, while this workspace keeps
+  # config/secrets as a validated link outside the repository. Preserve that
+  # boundary when extracting the archived directory; tar otherwise replaces
+  # the directory symlink by default.
+  "$script_dir/protect-compose-secrets.sh" "$repo_root" >/dev/null
+  tar --keep-directory-symlink -xzf "${backup_dir}/config.tgz"
+  "$script_dir/protect-compose-secrets.sh" "$repo_root" >/dev/null
 fi
 
 if [[ "$restore_tls" == true ]]; then

@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/recover-map.sh ENV_FILE SERVICE PARTITION_ID [WAIT_SECONDS]
 
-Safely restarts a fixed-partition map service by marking the current partition
+Safely restarts a Compose-discovered map service by marking the current partition
 owner dead, waiting for that server id to leave active_server_ids, then starting
 the service and waiting for the partition to be ready/alive again.
 
@@ -34,9 +34,35 @@ if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+if [[ ! -f "$env_file" ]]; then
+  printf 'env file not found: %s\n' "$env_file" >&2
+  exit 2
+fi
+
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*(export[[:space:]]+)?" key "=" {
+      sub(/^[^=]*=/, "")
+      value=$0
+    }
+    END {
+      gsub(/^"|"$|^\047|\047$/, "", value)
+      print value
+    }
+  ' "$env_file" 2>/dev/null
+}
+
+map_partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(env_value DUNE_WORLD_PARTITION_COUNT)}"
+export DUNE_WORLD_PARTITION_COUNT="${map_partition_count:-30}"
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(env_value COMPOSE_PROFILES)}"
+
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 seed_timeout="${DUNE_RECOVER_MAP_SEED_TIMEOUT_SECONDS:-90}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$script_dir/ensure-map-network-capacity.py" ]]; then
+  python3 "$script_dir/ensure-map-network-capacity.py" "$env_file"
+fi
 if [[ -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
   export COMPOSE_FILES
@@ -47,23 +73,36 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 1
+fi
+all_map_partitions="$("$map_catalog_script" "$env_file" --no-env-file-read --field all-map-partitions --write-cache)"
+service_partition=""
+while IFS=: read -r catalog_service catalog_partition; do
+  if [[ "$catalog_service" == "$service" ]]; then
+    service_partition="$catalog_partition"
+    break
+  fi
+done <<< "$all_map_partitions"
+if [[ -z "$service_partition" ]]; then
+  printf 'unknown Compose map worker: %s\n' "$service" >&2
+  exit 2
+fi
+if [[ "$service_partition" != "$partition_id" ]]; then
+  printf 'partition mismatch for %s: Compose defines %s, requested %s\n' "$service" "$service_partition" "$partition_id" >&2
+  exit 2
+fi
+all_map_profiles="$("$map_catalog_script" "$env_file" --no-env-file-read --field all-profiles)"
+for profile in $all_map_profiles; do
+  compose+=(--profile "$profile")
+done
 
 if [[ ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
   printf 'DUNE_RECOVER_MAP_SEED_TIMEOUT_SECONDS must be numeric\n' >&2
   exit 2
 fi
-
-env_value() {
-  local key="$1"
-  awk -F= -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      sub(/^[^=]*=/, "")
-      gsub(/^["'\''"]|["'\''"]$/, "")
-      print
-      exit
-    }
-  ' "$env_file" 2>/dev/null
-}
 
 db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
@@ -165,8 +204,22 @@ refresh_postgres_neighbor_for_service() {
   printf 'refreshed postgres neighbor for %s: %s/%s\n' "$service" "$service_ip" "$service_mac"
 }
 
-printf 'starting stateful dependencies\n'
-"${compose[@]}" up -d --no-recreate --no-deps postgres admin-rmq game-rmq
+refresh_map_neighbors_for_service() {
+  if [[ ! -x "$script_dir/refresh-map-neighbors.sh" ]]; then
+    return 0
+  fi
+  printf 'refreshing map-to-map neighbors for %s\n' "$service"
+  if ! CONTAINER_RUNTIME="$container_runtime" COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-dune_server}" \
+      "$script_dir/refresh-map-neighbors.sh" "$service"; then
+    printf 'warning: map-to-map neighbor refresh failed for %s\n' "$service" >&2
+  fi
+}
+
+printf 'ensuring stateful dependencies are running\n'
+# These containers are stateful and already have validated images. Start the
+# existing containers directly so recovery does not try to resolve the private
+# Funcom registry or replace healthy dependencies.
+"${compose[@]}" start postgres admin-rmq game-rmq
 wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
@@ -201,8 +254,9 @@ if [[ -n "$old_server_id" ]]; then
 fi
 
 printf 'starting/recreating map service: %s\n' "$service"
-"${compose[@]}" up -d --force-recreate --no-deps "$service"
+"${compose[@]}" up --pull never -d --force-recreate --no-deps "$service"
 refresh_postgres_neighbor_for_service "$service"
+refresh_map_neighbors_for_service "$service"
 run_seed_neighbors
 
 printf 'waiting for partition %s to become ready/alive/active\n' "$partition_id"

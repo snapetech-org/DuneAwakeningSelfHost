@@ -183,6 +183,11 @@ fi
 
 package_tag="${package_tags[0]}"
 
+if [[ -z "$installed_buildid" || -z "$target_buildid" ]]; then
+  echo "status: unable to verify Steam's installed and target build IDs"
+  exit 2
+fi
+
 if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" != "$target_buildid" ]]; then
   echo "status: Steam package install incomplete"
   echo "installed buildid: $installed_buildid"
@@ -192,9 +197,9 @@ if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" !=
 fi
 
 if [[ "$current_tag" == "$package_tag" ]]; then
-  if [[ -n "$installed_buildid" && "$installed_buildid" != "$loaded_buildid" ]]; then
+  if [[ -z "$loaded_buildid" || "$installed_buildid" != "$loaded_buildid" ]]; then
     echo "status: same tag but Steam build changed"
-    echo "reload required: $package_tag buildid $installed_buildid"
+    echo "reload required: $package_tag buildid $installed_buildid (last loaded: ${loaded_buildid:-missing})"
     exit 1
   fi
   echo "status: current"
@@ -218,7 +223,7 @@ echo "  docker compose --env-file $env_file config --quiet"
 echo "  ./scripts/backup-state.sh $env_file"
 
 if [[ "$write_env" == true ]]; then
-  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet \
+  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --allow-protected-link --quiet \
     --set DUNE_IMAGE_TAG "$package_tag"
   echo "updated $env_file: DUNE_IMAGE_TAG=$package_tag"
   exit 0

@@ -1,0 +1,12 @@
+[Unit]
+Description=Local socket for isolated public Dune directory signing
+
+[Socket]
+ListenStream=/run/dune-public-directory-signer.sock
+SocketUser=__SOCKET_USER__
+SocketMode=0600
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

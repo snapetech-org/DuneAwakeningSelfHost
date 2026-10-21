@@ -342,7 +342,7 @@ BEGIN;
 CREATE TEMP TABLE dash_life_candidate ON COMMIT DROP AS
 SELECT eps.account_id, eps.player_pawn_id, eps.life_state::text AS original_life_state,
        eps.death_location::text AS original_death_location,
-       gp.description AS pawn, gp.server_info
+       gp.actor AS pawn, gp.server_info
 FROM dune.encrypted_player_state eps
 CROSS JOIN LATERAL dune.get_player_pawn(eps.account_id) gp
 WHERE eps.life_state::text = 'Alive'

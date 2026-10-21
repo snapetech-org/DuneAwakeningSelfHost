@@ -365,21 +365,101 @@ ensure_official_images_loaded() {
   ./scripts/load-images.sh "$env_file"
 }
 
-if ! command -v docker >/dev/null 2>&1; then
-  if [ ! -S /var/run/docker.sock ]; then
+restart_api_phase=false
+case "$phase" in
+  start|stop|restart|shutdown) restart_api_phase=true ;;
+esac
+if ! command -v docker >/dev/null 2>&1 \
+  || { [ -n "${DUNE_RESTART_API_SOCKET:-}" ] \
+    && [ -S "$DUNE_RESTART_API_SOCKET" ] \
+    && [ "$restart_api_phase" = true ]; }; then
+  restart_api_socket="${DUNE_RESTART_API_SOCKET:-}"
+  case "$phase" in
+    start|stop|restart|shutdown)
+      if [ -n "$restart_api_socket" ] && [ -S "$restart_api_socket" ]; then
+        python3 - "$target" "$services" "$restart_api_socket" "$action" "$phase" <<'PY'
+import json
+import os
+import socket
+import sys
+
+
+target, services, socket_path, action, phase = sys.argv[1:]
+timeout = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
+service_list = services.split()
+if target != "all" and not service_list:
+    service_list = [target]
+payload = json.dumps({
+    "target": target,
+    "services": service_list,
+    "action": action,
+    "phase": phase,
+    "dryRun": os.environ.get("DUNE_RESTART_DRY_RUN", "").lower() in ("1", "true", "yes", "on"),
+    "fastDynamicStart": os.environ.get("DUNE_RESTART_FAST_DYNAMIC_START", "").lower() in ("1", "true", "yes", "on"),
+    "jobId": os.environ.get("DUNE_RESTART_JOB_ID", ""),
+}).encode("utf-8")
+request = (
+    b"POST /v1/restart HTTP/1.1\r\n"
+    b"Host: dune-restart-api\r\n"
+    b"Connection: close\r\n"
+    b"Content-Type: application/json\r\n"
+    + f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii")
+    + payload
+)
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    sock.settimeout(timeout)
+    sock.connect(socket_path)
+    sock.sendall(request)
+    response = bytearray()
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        response.extend(chunk)
+finally:
+    sock.close()
+
+headers, separator, body = bytes(response).partition(b"\r\n\r\n")
+if not separator:
+    print("host restart API returned an invalid HTTP response", file=sys.stderr)
+    sys.exit(75)
+try:
+    status = int(headers.split(b" ", 2)[1])
+    result = json.loads(body.decode("utf-8"))
+except (ValueError, IndexError, UnicodeDecodeError, json.JSONDecodeError):
+    print("host restart API returned an invalid response body", file=sys.stderr)
+    sys.exit(75)
+output = str(result.get("output") or "").strip()
+if output:
+    print(output)
+if status != 200 or not result.get("ok"):
+    error = str(result.get("error") or "host restart operation failed").strip()
+    if error:
+        print(error, file=sys.stderr)
+    sys.exit(int(result.get("exitCode") or 1))
+sys.exit(0)
+PY
+        exit $?
+      fi
+      ;;
+  esac
+
+  docker_socket="${DUNE_RESTART_DOCKER_SOCKET:-/var/run/docker.sock}"
+  if [ ! -S "$docker_socket" ]; then
     cat >&2 <<EOF
-Docker CLI is not available and /var/run/docker.sock is not mounted.
+Docker CLI is not available and the configured Docker API socket is unavailable: ${docker_socket}
 Target: ${target}
 Services: ${services}
 
-Mount the Docker socket for restart-only execution, run this hook from the
-Docker host, or replace DUNE_ADMIN_RESTART_COMMAND with a trusted wrapper.
+Run this hook from the Docker host or configure a constrained restart API.
 EOF
     exit 78
   fi
   python3 - "$target" "$services" <<'PY'
 import json
 import os
+import re
 import shlex
 import socket
 import sys
@@ -401,18 +481,34 @@ compose_files = [item for item in os.environ.get("COMPOSE_FILES", "compose.yaml:
 env_file = os.environ.get("ENV_FILE", ".env")
 watchdog_control_enabled = os.environ.get("DUNE_MAP_WATCHDOG_CONTROL", "true").lower() not in ("0", "false", "no", "off")
 
-default_services = [
-    "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
-    "testing-carthag", "testing-waterfat", "deep-desert", "proces-verbal",
-    "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
-    "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag",
-    "faction-outpost-atre", "faction-outpost-hark", "heighliner-dungeon",
-    "ecolab-green-089", "ecolab-green-152", "ecolab-green-024",
-    "ecolab-green-195", "ecolab-green-136", "overland-m-01",
-    "overland-s-04", "overland-s-06", "bandit-fortress", "overland-s-07",
-    "overland-s-08", "dungeon-thepit",
-    "director", "gateway", "text-router", "rmq-auth-shim",
-]
+def read_map_catalog_cache():
+    configured = os.environ.get("DUNE_MAP_CATALOG_FILE", "backups/admin-panel/map-catalog.json")
+    candidates = [configured] if os.path.isabs(configured) else [
+        configured,
+        os.path.join(host_workspace, configured) if host_workspace else "",
+        os.path.join("/workspace", configured),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8") as handle:
+                catalog = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        services = catalog.get("active_services")
+        maps = catalog.get("maps")
+        if catalog.get("schema_version") != 1 or not isinstance(services, list) or not isinstance(maps, list):
+            continue
+        if any(not isinstance(service, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", service) for service in services):
+            continue
+        return catalog
+    return None
+
+
+map_catalog = read_map_catalog_cache()
+SERVICE_LAYER_SERVICES = ["director", "gateway", "text-router", "rmq-auth-shim"]
+default_services = list(map_catalog["active_services"]) + SERVICE_LAYER_SERVICES if map_catalog else []
 
 
 def env_value(key):
@@ -437,18 +533,14 @@ def env_value(key):
     return ""
 
 
-partition_count = env_value("DUNE_WORLD_PARTITION_COUNT") or "30"
-if partition_count not in ("30", "31"):
-    print(f"DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: {partition_count}", file=sys.stderr)
-    sys.exit(64)
-if partition_count == "31":
-    default_services.insert(default_services.index("director"), "deep-desert-pvp")
-
 stateful_services = {"postgres", "admin-rmq", "game-rmq"}
 allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
 
 services = services_arg.split() if services_arg else []
 if target == "all":
+    if not map_catalog:
+        print("map catalog cache is missing or invalid; run scripts/map_catalog.py on the Compose host before restarting all", file=sys.stderr)
+        sys.exit(64)
     services = default_services
 if not services:
     print(f"no services mapped for target {target}", file=sys.stderr)
@@ -568,30 +660,58 @@ def ensure_image(image):
         sys.exit(75)
 
 
-def run_host_shell(name, shell_command):
+def run_host_shell(name, shell_command, *, include_host_ssh=False):
     if not host_workspace:
         return {"ok": False, "skipped": True, "warning": "host workspace is not configured"}
     ensure_image(compose_image)
-    shell_command = "apk add --no-cache bash iproute2 util-linux sudo >/dev/null 2>&1 || true; " + shell_command
+    shell_command = "apk add --no-cache bash iproute2 util-linux sudo jq >/dev/null 2>&1 || true; " + shell_command
+    helper_env = [
+        f"COMPOSE_PROJECT_NAME={project}",
+        "DOCKER_HOST=unix:///var/run/docker.sock",
+    ]
+    helper_binds = [
+        f"{socket_path}:/var/run/docker.sock",
+        f"{host_workspace}:{host_workspace}",
+        f"{host_workspace}:/workspace",
+    ]
+    helper_tmpfs = {}
+    if include_host_ssh:
+        host_ssh_dir = env_value("DUNE_RESTART_HOST_SSH_DIR") or "/home/keith/.ssh"
+        host_ssh_dir = os.path.normpath(os.path.expanduser(host_ssh_dir))
+        if not os.path.isabs(host_ssh_dir):
+            return {"ok": False, "error": f"host router SSH directory must be an absolute host path: {host_ssh_dir}"}
+        helper_binds.append(f"{host_ssh_dir}:/mnt/host-ssh:ro")
+        helper_binds.append(f"{host_ssh_dir}:{host_ssh_dir}:ro")
+        # OpenSSH resolves the helper process home from its passwd entry (root),
+        # not the HOME environment passed to `sh -lc`. Copy the read-only host
+        # credentials into a root-owned tmpfs so host-key and private-key
+        # ownership checks pass without writing credentials into the image.
+        helper_tmpfs["/root/.ssh"] = "mode=0700"
+        shell_command = (
+            "set -e; if [ ! -d /mnt/host-ssh ] || [ -z \"$(find /mnt/host-ssh -mindepth 1 -maxdepth 1 -print -quit)\" ]; then "
+            f"echo 'host router SSH directory is empty or unavailable on Docker host: {host_ssh_dir}' >&2; exit 1; fi; "
+            "mkdir -p /root/.ssh; cp -R -L /mnt/host-ssh/. /root/.ssh/; "
+            "find /root/.ssh -type d -exec chmod 700 {} \\; ; "
+            "find /root/.ssh -type f -exec chmod 600 {} \\; ; "
+            + shell_command
+        )
+    host_config = {
+        "AutoRemove": False,
+        "NetworkMode": "host",
+        "UTSMode": "host",
+        "CapDrop": ["ALL"],
+        "CapAdd": ["DAC_OVERRIDE"],
+        "SecurityOpt": ["no-new-privileges:true"],
+        "Binds": helper_binds,
+    }
+    if helper_tmpfs:
+        host_config["Tmpfs"] = helper_tmpfs
     body = {
         "Image": compose_image,
         "WorkingDir": host_workspace,
         "Cmd": ["sh", "-lc", shell_command],
-        "Env": [
-            f"COMPOSE_PROJECT_NAME={project}",
-            "DOCKER_HOST=unix:///var/run/docker.sock",
-        ],
-        "HostConfig": {
-            "AutoRemove": False,
-            "NetworkMode": "host",
-            "PidMode": "host",
-            "Privileged": True,
-            "Binds": [
-                f"{socket_path}:/var/run/docker.sock",
-                f"{host_workspace}:{host_workspace}",
-                f"{host_workspace}:/workspace",
-            ],
-        },
+        "Env": helper_env,
+        "HostConfig": host_config,
         "Labels": {
             "com.snapetech.dune.role": name,
             "com.snapetech.dune.restart_job": os.environ.get("DUNE_RESTART_JOB_ID", ""),
@@ -631,6 +751,18 @@ def map_watchdog_control(verb):
     return run_host_shell("admin-restart-watchdog", command)
 
 
+def ensure_map_network_capacity():
+    if phase not in ("start", "restart") or dry_run:
+        return {"ok": True, "skipped": True}
+    command = (
+        "set -e; apk add --no-cache openssh-client python3 py3-yaml >/dev/null 2>&1; "
+        "if [ ! -f /workspace/scripts/ensure-map-network-capacity.py ]; then "
+        "echo 'map network capacity helper is missing' >&2; exit 1; fi; "
+        f"python3 /workspace/scripts/ensure-map-network-capacity.py {shlex.quote(env_file)}"
+    )
+    return run_host_shell("admin-map-network-capacity", command, include_host_ssh=True)
+
+
 def run_host_compose(services):
     if not host_workspace:
         print(
@@ -642,7 +774,15 @@ def run_host_compose(services):
     compose_command = ["docker", "compose"]
     for file_name in compose_files:
         compose_command.extend(["-f", file_name])
-    compose_command.extend(["--env-file", env_file, "up", "-d"])
+    selected_profiles = sorted({
+        profile
+        for map_entry in (map_catalog or {}).get("maps", [])
+        if map_entry.get("service") in services
+        for profile in map_entry.get("profiles", [])
+    })
+    for profile in selected_profiles:
+        compose_command.extend(["--profile", profile])
+    compose_command.extend(["--env-file", env_file, "up", "--pull", "never", "-d"])
     if not fast_dynamic_start:
         compose_command.append("--force-recreate")
     compose_command.append("--no-deps")
@@ -721,7 +861,7 @@ def run_host_compose(services):
     if fast_dynamic_start:
         shell_command = (
             "set -e; "
-            "apk add --no-cache bash binutils gdb iproute2 util-linux sudo >/dev/null; "
+            "apk add --no-cache bash binutils gdb iproute2 util-linux sudo jq >/dev/null; "
             "if [ -x /workspace/scripts/validate-landsraad-coriolis-cycle.sh ]; then "
             f"/workspace/scripts/validate-landsraad-coriolis-cycle.sh {shlex.quote(env_file)}; "
             "fi; "
@@ -738,7 +878,7 @@ def run_host_compose(services):
     else:
         shell_command = (
         "set -e; "
-        + "apk add --no-cache bash binutils gdb iproute2 python3 util-linux sudo >/dev/null; "
+        + "apk add --no-cache bash binutils gdb iproute2 python3 util-linux sudo jq >/dev/null; "
         + ensure_official_images_shell
         + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
         + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
@@ -792,6 +932,8 @@ def run_host_compose(services):
         "Env": [
             f"COMPOSE_PROJECT_NAME={project}",
             "DOCKER_HOST=unix:///var/run/docker.sock",
+            f"DUNE_RESTART_TARGET={target}",
+            f"DUNE_RESTART_PHASE={phase}",
         ],
         "HostConfig": {
             "AutoRemove": False,
@@ -1060,7 +1202,7 @@ def run_host_update_check():
         "docker load -i \"$path\"; "
         "done; "
         "if [ -n \"$installed_buildid\" ]; then mkdir -p \"$(dirname \"$loaded_buildid_file\")\"; printf '%s\\n' \"$installed_buildid\" > \"$loaded_buildid_file\"; fi; "
-        "python3 ./scripts/update-env-file.py \"$env_file\" --quiet --set DUNE_IMAGE_TAG \"$package_tag\"; "
+        "python3 ./scripts/update-env-file.py \"$env_file\" --allow-protected-link --quiet --set DUNE_IMAGE_TAG \"$package_tag\"; "
         "echo \"updated $env_file: DUNE_IMAGE_TAG=$package_tag\"; "
         "rm -f \"$tag_file\""
     )
@@ -1199,6 +1341,10 @@ if phase in ("start", "restart") and use_host_compose:
     if dry_run:
         print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "hostCompose": True, "services": services}, separators=(",", ":")))
         sys.exit(0)
+    network_result = ensure_map_network_capacity()
+    if not network_result.get("ok"):
+        print(network_result.get("output") or network_result.get("error") or "map network capacity check failed", file=sys.stderr)
+        sys.exit(int(network_result.get("returncode") or 1))
     if not fast_dynamic_start:
         map_watchdog_control("stop")
     result = run_host_compose(services)
@@ -1220,6 +1366,11 @@ for service in services:
 
 restarted = []
 missing = []
+if phase in ("start", "restart") and not dry_run:
+    network_result = ensure_map_network_capacity()
+    if not network_result.get("ok"):
+        print(network_result.get("output") or network_result.get("error") or "map network capacity check failed", file=sys.stderr)
+        sys.exit(int(network_result.get("returncode") or 1))
 if phase in ("shutdown", "stop", "restart") and not dry_run:
     sietch_result = run_host_sietches("stop-managed")
     if not sietch_result.get("ok"):
@@ -1266,10 +1417,27 @@ if phase in ("start", "restart") and not dry_run:
         print(sietch_result.get("output") or sietch_result.get("error") or "Sietch reconcile failed", file=sys.stderr)
         sys.exit(int(sietch_result.get("returncode") or 1))
     map_watchdog_control("start")
+    if target == "all":
+        build_check = run_host_shell(
+            "admin-verify-latest-build",
+            "set -e; if [ ! -x /workspace/scripts/verify-running-image-tag.sh ]; then "
+            "echo 'latest Steam build verifier is missing' >&2; exit 1; fi; "
+            f"/workspace/scripts/verify-running-image-tag.sh {shlex.quote(env_file)} --versions-only",
+        )
+        if not build_check.get("ok"):
+            print(build_check.get("output") or build_check.get("error") or "latest Steam build check failed", file=sys.stderr)
+            sys.exit(int(build_check.get("returncode") or 1))
 
 print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": dry_run, "affected": restarted, "missing": missing}, separators=(",", ":")))
 PY
   exit $?
+fi
+
+if { [ "$phase" = "start" ] || [ "$phase" = "restart" ]; } \
+    && [ "${DUNE_RESTART_DRY_RUN:-}" != "true" ] \
+    && [ "${DUNE_RESTART_DRY_RUN:-}" != "1" ] \
+    && [ -f "$(dirname "$0")/ensure-map-network-capacity.py" ]; then
+  python3 "$(dirname "$0")/ensure-map-network-capacity.py" "${ENV_FILE:-.env}"
 fi
 
 if [ -x "$(dirname "$0")/compose-files.sh" ]; then
@@ -1277,6 +1445,13 @@ if [ -x "$(dirname "$0")/compose-files.sh" ]; then
   export COMPOSE_FILES
 fi
 compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
+map_catalog_script="$(dirname -- "$0")/map_catalog.py"
+if [ ! -x "$map_catalog_script" ]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 1
+fi
+map_services="$("$map_catalog_script" "${ENV_FILE:-.env}" --field services --write-cache)"
+map_profiles="$("$map_catalog_script" "${ENV_FILE:-.env}" --field all-profiles)"
 set -- docker compose
 old_ifs="$IFS"
 IFS=:
@@ -1287,26 +1462,21 @@ IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
-  partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(env_file_value DUNE_WORLD_PARTITION_COUNT "${ENV_FILE:-.env}")}"
-  partition_count="${partition_count:-30}"
-  case "$partition_count" in
-    30)
-      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
-      ;;
-    31)
-      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit deep-desert-pvp director gateway text-router rmq-auth-shim"
-      ;;
-    *)
-      printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
-      exit 64
-      ;;
-  esac
+  if [ -z "$map_services" ]; then
+    printf 'map catalog returned no workers; refusing to restart all with an empty map roster\n' >&2
+    exit 64
+  fi
+  services="$map_services director gateway text-router rmq-auth-shim"
 fi
 
 if [ -z "$services" ]; then
   printf 'no services mapped for target %s\n' "$target" >&2
   exit 65
 fi
+
+for profile in $map_profiles; do
+  set -- "$@" --profile "$profile"
+done
 
 # shellcheck disable=SC2086
 case " $services " in
@@ -1343,7 +1513,7 @@ if [ "$phase" = "start" ]; then
       run_landsraad_coriolis_guard
       # Compose starts the existing stopped container when its config hash is
       # current and recreates it only when configuration actually changed.
-      "$@" up -d --no-deps $services
+      "$@" up --pull never -d --no-deps $services
       seed_gateway_neighbors
       if [ -x ./scripts/restart-post-start-health.sh ]; then
         ./scripts/restart-post-start-health.sh
@@ -1388,7 +1558,7 @@ if [ "$phase" = "start" ]; then
     ./scripts/full-world-partitions.sh "${ENV_FILE:-.env}"
   fi
   ensure_official_images_loaded
-  "$@" up -d --force-recreate --no-deps $services
+  "$@" up --pull never -d --force-recreate --no-deps $services
   seed_gateway_neighbors
   if [ -x ./scripts/restart-post-start-health.sh ]; then
     ./scripts/restart-post-start-health.sh
@@ -1403,7 +1573,7 @@ map_watchdog_control stop
 pre_start_hygiene
 seed_gateway_neighbors
 ensure_official_images_loaded
-"$@" up -d --force-recreate --no-deps $services
+"$@" up --pull never -d --force-recreate --no-deps $services
 seed_gateway_neighbors
 if [ -x ./scripts/restart-post-start-health.sh ]; then
   ./scripts/restart-post-start-health.sh

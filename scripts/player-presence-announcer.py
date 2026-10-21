@@ -95,35 +95,60 @@ def now_ts():
     return int(time.time())
 
 
-def resolved_compose_files(default="compose.yaml:compose.allmaps.yaml"):
-    script = ROOT / "scripts" / "compose-files.sh"
-    env_file = env("DUNE_ADMIN_BOT_ENV_FILE", ".env")
-    if script.exists() and os.access(script, os.X_OK):
-        cmd_env = os.environ.copy()
-        cmd_env.setdefault("DUNE_DEFAULT_COMPOSE_FILES", default)
-        result = subprocess.run(
-            [str(script), env_file],
-            cwd=ROOT,
-            env=cmd_env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().splitlines()[-1]
-    return env("COMPOSE_FILES", default) or default
-
-
 def compose_cmd(*args):
-    files = resolved_compose_files().split(":")
-    cmd = [env("CONTAINER_RUNTIME", "docker"), "compose"]
-    for file in files:
-        if file:
-            cmd.extend(["-f", file])
-    cmd.extend(["--env-file", env("DUNE_ADMIN_BOT_ENV_FILE", ".env")])
-    cmd.extend(args)
+    """Run a bounded command in the existing PostgreSQL container.
+
+    The announcer only used Compose to execute psql. Resolving the full Dune
+    Compose project on every poll needlessly read the game .env and stalled
+    under host pressure. Select the unique running database container by its
+    Compose labels, then exec psql with that container's configured user.
+    """
+    if not args or args[0] != "exec":
+        raise ValueError("player-presence database access only supports docker exec")
+    command = list(args[1:])
+    if command and command[0] == "-T":
+        command.pop(0)
+    if not command or command.pop(0) != "postgres":
+        raise ValueError("player-presence database access only supports the postgres service")
+
+    runtime = env("CONTAINER_RUNTIME", "docker")
+    project = env("DUNE_PLAYER_PRESENCE_COMPOSE_PROJECT", "dune_server")
+    filters = [
+        "--filter", "status=running",
+        "--filter", f"label=com.docker.compose.project={project}",
+        "--filter", "label=com.docker.compose.service=postgres",
+    ]
+    listed = subprocess.run(
+        [runtime, "ps", "-q", *filters],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not locate running PostgreSQL container (docker ps exit {listed.returncode})")
+    container_ids = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if len(container_ids) != 1:
+        raise RuntimeError(f"expected one running PostgreSQL container for project {project}; found {len(container_ids)}")
+
+    inspected = subprocess.run(
+        [runtime, "inspect", "--format", "{{.Config.User}}", container_ids[0]],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+    if inspected.returncode != 0:
+        raise RuntimeError(f"could not inspect running PostgreSQL container (docker inspect exit {inspected.returncode})")
+    container_user = inspected.stdout.strip()
+    cmd = [runtime, "exec"]
+    if container_user:
+        cmd.extend(["--user", container_user])
+    cmd.extend([container_ids[0], *command])
     return cmd
 
 
@@ -1252,10 +1277,16 @@ def announce(message):
     child_env["DUNE_ANNOUNCE_MESSAGE"] = message
     child_env["DUNE_ANNOUNCE_JOB_ID"] = "player-presence"
     child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+    child_env["DUNE_ANNOUNCE_ENV_FILE"] = "/dev/null"
+    child_env["DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT"] = "false"
+    child_env["DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH"] = "false"
     child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_EXCHANGE", env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map"))
     child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_CHANNEL", env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map"))
     child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS", "<empty>") or "<empty>"
     child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_BIND_ONLINE_QUEUES", env("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", "true"))
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS"] = ""
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = ""
+    child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = ""
     result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
     return {
         "ok": result.returncode == 0,
@@ -1294,6 +1325,9 @@ def private_message(player, message, job_id="player-presence-private-message"):
     child_env["DUNE_ANNOUNCE_MESSAGE"] = message
     child_env["DUNE_ANNOUNCE_JOB_ID"] = job_id
     child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+    child_env["DUNE_ANNOUNCE_ENV_FILE"] = "/dev/null"
+    child_env["DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT"] = "false"
+    child_env["DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH"] = "false"
     child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
     child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE", "chat.whispers")
     child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL", "Whispers")

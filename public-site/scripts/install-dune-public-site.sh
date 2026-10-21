@@ -64,8 +64,11 @@ find "$repo_root/public-site/static" -maxdepth 1 -type f \( \
   done
 
 install -d -m 0755 "$prefix/sbin"
+install -d -m 0755 "$prefix/libexec/dune-public-directory"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-static-status.sh" "$prefix/sbin/render-dune-static-status.sh"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$prefix/sbin/render-dune-public-snapshot.py"
+install -m 0755 "$repo_root/public-site/scripts/dune-public-directory-signer.py" "$prefix/libexec/dune-public-directory-signer.py"
+install -m 0644 "$repo_root/admin/public_directory.py" "$prefix/libexec/dune-public-directory/public_directory.py"
 install -m 0755 "$repo_root/public-site/scripts/register-deep-desert-background.py" "$prefix/sbin/register-deep-desert-background.py"
 install -m 0755 "$repo_root/public-site/scripts/build-federated-directory.py" "$prefix/sbin/build-federated-directory.py"
 install -m 0755 "$repo_root/public-site/scripts/configure-federated-directory-sources.py" "$prefix/sbin/configure-federated-directory-sources.py"
@@ -94,7 +97,23 @@ if [[ "$install_systemd" -eq 1 ]]; then
   install -m 0644 "$tmp_service" /etc/systemd/system/render-dune-static-status.service
   rm -f "$tmp_service"
   install -m 0644 "$repo_root/public-site/systemd/render-dune-static-status.timer" /etc/systemd/system/render-dune-static-status.timer
+  signing_key_source="$(realpath -m "$repo_root/config/secrets/public-directory-ed25519.pem")"
+  if [[ "$signing_key_source" == *[[:space:]]* ]]; then
+    echo "signing key source path cannot contain whitespace: $signing_key_source" >&2
+    exit 1
+  fi
+  tmp_signer_service="$(mktemp)"
+  sed "s#__SIGNING_KEY_PATH__#$signing_key_source#" \
+    "$repo_root/public-site/systemd/dune-public-directory-signer.service" > "$tmp_signer_service"
+  install -m 0644 "$tmp_signer_service" /etc/systemd/system/dune-public-directory-signer.service
+  rm -f "$tmp_signer_service"
+  tmp_signer_socket="$(mktemp)"
+  sed "s#__SOCKET_USER__#$user_name#" \
+    "$repo_root/public-site/systemd/dune-public-directory-signer.socket" > "$tmp_signer_socket"
+  install -m 0644 "$tmp_signer_socket" /etc/systemd/system/dune-public-directory-signer.socket
+  rm -f "$tmp_signer_socket"
   systemctl daemon-reload
+  systemctl enable --now dune-public-directory-signer.socket
   systemctl enable --now render-dune-static-status.timer
 fi
 

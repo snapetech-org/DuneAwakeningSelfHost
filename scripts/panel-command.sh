@@ -45,10 +45,19 @@ fi
 (( ${#argv[@]} >= 1 && ${#argv[@]} <= 2 )) || { usage >&2; exit 64; }
 
 map_service="${argv[1]:-}"
-case "$map_service" in
-  ""|survival|overmap|arrakeen|harko-village|testing-hephaestus|testing-carthag|testing-waterfat|deep-desert|proces-verbal|lostharvest-ecolab-a|lostharvest-ecolab-b|lostharvest-forgottenlab|art-of-kanly|dungeon-hephaestus|dungeon-oldcarthag|faction-outpost-atre|faction-outpost-hark|heighliner-dungeon|ecolab-green-089|ecolab-green-152|ecolab-green-024|ecolab-green-195|ecolab-green-136|overland-m-01|overland-s-04|overland-s-06|bandit-fortress|overland-s-07|overland-s-08|dungeon-thepit|deep-desert-pvp) ;;
-  *) printf 'unknown map service: %s\n' "$map_service" >&2; exit 64 ;;
-esac
+if [[ -n "$map_service" ]]; then
+  map_catalog_script="$repo_root/scripts/map_catalog.py"
+  map_compose_files="$("$repo_root/scripts/compose-files.sh" "$env_file")"
+  all_map_services="$(
+    COMPOSE_FILES="$map_compose_files" \
+    DUNE_MAP_CATALOG_FILE="$repo_root/backups/admin-panel/map-catalog.json" \
+      "$map_catalog_script" "$env_file" --field all-services --write-cache
+  )"
+  case " $all_map_services " in
+    *" $map_service "*) ;;
+    *) printf 'unknown map service: %s\n' "$map_service" >&2; exit 64 ;;
+  esac
+fi
 
 command_name="${argv[0]}"
 planned=()

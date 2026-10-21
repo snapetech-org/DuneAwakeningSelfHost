@@ -39,8 +39,9 @@ Environment:
   DUNE_WATCH_DEGRADED_CONFIRMATIONS Consecutive degraded checks before recovery. Default: 2
   DUNE_WATCH_REQUIRED_READY_PARTITIONS Comma-separated partitions requiring ready=true.
                                   Default: DUNE_CORE_PARTITION_IDS or 1,2
-  DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30; set 31
-                             only when the second Deep Desert is intentionally online.
+  DUNE_WORLD_PARTITION_COUNT Legacy opt-in for profile-gated maps that declare
+                             dune.map.enabled-by-partition-count. Ordinary map
+                             services are discovered directly from Compose.
 USAGE
 }
 
@@ -100,19 +101,34 @@ read_env() {
   printf '%s' "$value"
 }
 
-partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
-partition_count="${partition_count:-30}"
 db="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}}"
 db="${db:-${DUNE_DB_NAME:-$(read_env DUNE_DB_NAME)}}"
 db="${db:-dune_sb_1_4_0_0}"
-case "$partition_count" in
-  30|31) ;;
-  *)
-    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
-    exit 2
-    ;;
-esac
+
+# Pass only the non-secret settings map discovery needs. Docker Compose reads
+# the runtime dotenv file only for actual service operations below.
+map_partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
+export DUNE_WORLD_PARTITION_COUNT="${map_partition_count:-30}"
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(read_env COMPOSE_PROFILES)}"
+
+map_catalog_script="$script_dir/map_catalog.py"
+if [[ ! -x "$map_catalog_script" ]]; then
+  printf 'map catalog helper is missing or not executable: %s\n' "$map_catalog_script" >&2
+  exit 2
+fi
+mapfile -t MAP_PARTITIONS < <("$map_catalog_script" "$env_file" --no-env-file-read --field map-partitions --write-cache)
+map_profiles_text="$("$map_catalog_script" "$env_file" --no-env-file-read --field profiles)"
+if [[ -n "$map_profiles_text" ]]; then
+  read -r -a map_profiles <<< "$map_profiles_text"
+  for profile in "${map_profiles[@]}"; do
+    compose+=(--profile "$profile")
+  done
+fi
+if (( ${#MAP_PARTITIONS[@]} == 0 )); then
+  printf 'map catalog returned no map workers; refusing to monitor an empty roster\n' >&2
+  exit 2
+fi
 
 if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$command_timeout" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ || ! "$control_plane_interval" =~ ^[0-9]+$ || ! "$control_plane_repair_interval" =~ ^[0-9]+$ || ! "$degraded_confirmations" =~ ^[1-9][0-9]*$ ]]; then
   printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_COMMAND_TIMEOUT, DUNE_WATCH_SEED_INTERVAL, DUNE_WATCH_SEED_TIMEOUT, DUNE_WATCH_CONTROL_PLANE_INTERVAL, DUNE_WATCH_CONTROL_PLANE_REPAIR_INTERVAL, and DUNE_WATCH_DEGRADED_CONFIRMATIONS must be numeric\n' >&2
@@ -145,40 +161,6 @@ if [[ -z "$mode" ]]; then
     trap 'rmdir "$lock_dir"' EXIT
   fi
 fi
-
-MAP_PARTITIONS=(
-  "survival:1"
-  "overmap:2"
-  "arrakeen:3"
-  "harko-village:4"
-  "testing-hephaestus:5"
-  "testing-carthag:6"
-  "testing-waterfat:7"
-  "deep-desert:8"
-  "proces-verbal:9"
-  "lostharvest-ecolab-a:10"
-  "lostharvest-ecolab-b:11"
-  "lostharvest-forgottenlab:12"
-  "art-of-kanly:13"
-  "dungeon-hephaestus:14"
-  "dungeon-oldcarthag:15"
-  "faction-outpost-atre:16"
-  "faction-outpost-hark:17"
-  "heighliner-dungeon:18"
-  "ecolab-green-089:19"
-  "ecolab-green-152:20"
-  "ecolab-green-024:21"
-  "ecolab-green-195:22"
-  "ecolab-green-136:23"
-  "overland-m-01:24"
-  "overland-s-04:25"
-  "overland-s-06:26"
-  "bandit-fortress:27"
-  "overland-s-07:28"
-  "overland-s-08:29"
-  "dungeon-thepit:30"
-  "deep-desert-pvp:31"
-)
 
 declare -A LAST_RECOVERY=()
 declare -A DEGRADED_COUNTS=()
@@ -502,9 +484,6 @@ check_once() {
   for item in "${MAP_PARTITIONS[@]}"; do
     service="${item%%:*}"
     partition_id="${item##*:}"
-    if (( partition_id > partition_count )); then
-      continue
-    fi
     status="$(container_status "$service")"
 
     if [[ "$mode" == "--status" ]]; then

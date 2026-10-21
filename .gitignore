@@ -25,6 +25,7 @@ config/admin-auth-subjects.json
 config/outbound-webhooks.json
 config/community-rewards.json
 config/remote-targets.json
+config/secrets
 config/secrets/
 
 *.log

@@ -8,7 +8,8 @@ Usage: scripts/wipe-hardcore-deep-desert.sh [ENV_FILE] [--execute] [--if-due] [-
 Dry-runs, or executes, the weekly Hardcore Deep Desert cleanup for only partition 31
 and dimension 1. The cleanup uses the official partition-scoped Coriolis
 function for actors/respawns and separately clears only Hardcore-dimension resource
-field state.
+field state. Spice-field metrics/reset are applied when the current database
+schema exposes the optional spice-field table and reset function.
 
 Defaults:
   DUNE_HARDCORE_DD_PARTITION_ID=31
@@ -183,6 +184,9 @@ SELECT set_config('pvp_dd.resource_map', :'resource_map', false);
 SELECT set_config('pvp_dd.spice_map', :'spice_map', false);
 SELECT set_config('pvp_dd.dimension_index', :'dimension_index', false);
 SELECT set_config('pvp_dd.expected_label', :'expected_label', false);
+SELECT to_regclass('dune.spicefield_types') IS NOT NULL AS spicefield_types_present,
+       to_regprocedure('dune.reset_global_spice_field_state(text,integer)') IS NOT NULL AS spice_reset_function_present
+\gset
 
 DO $$
 DECLARE
@@ -235,12 +239,20 @@ FROM (
   SELECT 'resourcefield_state_dimension', count(*)::bigint
     FROM dune.resourcefield_state r, target t
     WHERE r.map = t.resource_map AND r.dimension_index = t.dimension_index
-  UNION ALL
-  SELECT 'spicefield_types_dimension', count(*)::bigint
-    FROM dune.spicefield_types s, target t
-    WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
 ) counts
 ORDER BY metric;
+
+\if :spicefield_types_present
+WITH target AS (
+  SELECT current_setting('pvp_dd.spice_map') AS spice_map,
+         current_setting('pvp_dd.dimension_index')::integer AS dimension_index
+)
+SELECT 'spicefield_types_dimension' AS metric, count(*)::bigint AS count
+FROM dune.spicefield_types s, target t
+WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index;
+\else
+\echo spicefield_types is absent; spice-field metrics skipped
+\endif
 
 WITH target AS (
   SELECT current_setting('pvp_dd.partition_id')::bigint AS partition_id,
@@ -262,10 +274,6 @@ deleted_resourcefields AS (
   WHERE r.map = t.resource_map
     AND r.dimension_index = t.dimension_index
   RETURNING 1
-),
-reset_spice AS (
-  SELECT dune.reset_global_spice_field_state(t.spice_map, t.dimension_index)
-  FROM target t
 )
 SELECT mutation, count
 FROM (
@@ -274,11 +282,17 @@ FROM (
   UNION ALL
   SELECT 'resourcefield_state_deleted', count(*)::bigint
     FROM deleted_resourcefields
-  UNION ALL
-  SELECT 'spice_state_reset_called', count(*)::bigint
-    FROM reset_spice
 ) mutations
 ORDER BY mutation;
+
+\if :spice_reset_function_present
+SELECT dune.reset_global_spice_field_state(
+  current_setting('pvp_dd.spice_map'),
+  current_setting('pvp_dd.dimension_index')::integer
+);
+\else
+\echo reset_global_spice_field_state is absent; spice-field reset skipped
+\endif
 
 \echo after
 WITH target AS (
@@ -304,16 +318,26 @@ FROM (
   SELECT 'resourcefield_state_dimension', count(*)::bigint
     FROM dune.resourcefield_state r, target t
     WHERE r.map = t.resource_map AND r.dimension_index = t.dimension_index
-  UNION ALL
-  SELECT 'spicefield_current_active', coalesce(sum(current_globally_active), 0)::bigint
-    FROM dune.spicefield_types s, target t
-    WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
-  UNION ALL
-  SELECT 'spicefield_current_primed', coalesce(sum(current_globally_primed), 0)::bigint
-    FROM dune.spicefield_types s, target t
-    WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
 ) counts
 ORDER BY metric;
+
+\if :spicefield_types_present
+WITH target AS (
+  SELECT current_setting('pvp_dd.spice_map') AS spice_map,
+         current_setting('pvp_dd.dimension_index')::integer AS dimension_index
+)
+SELECT 'spicefield_current_active' AS metric,
+       coalesce(sum(current_globally_active), 0)::bigint AS count
+FROM dune.spicefield_types s, target t
+WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
+UNION ALL
+SELECT 'spicefield_current_primed',
+       coalesce(sum(current_globally_primed), 0)::bigint
+FROM dune.spicefield_types s, target t
+WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index;
+\else
+\echo spicefield_types is absent; spice-field post-cleanup metrics skipped
+\endif
 
 COMMIT;
 SQL
@@ -341,6 +365,8 @@ SELECT set_config('pvp_dd.resource_map', :'resource_map', false);
 SELECT set_config('pvp_dd.spice_map', :'spice_map', false);
 SELECT set_config('pvp_dd.dimension_index', :'dimension_index', false);
 SELECT set_config('pvp_dd.expected_label', :'expected_label', false);
+SELECT to_regclass('dune.spicefield_types') IS NOT NULL AS spicefield_types_present
+\gset
 
 DO $$
 DECLARE
@@ -391,15 +417,25 @@ FROM (
   SELECT 'resourcefield_state_dimension', count(*)::bigint
     FROM dune.resourcefield_state r, target t
     WHERE r.map = t.resource_map AND r.dimension_index = t.dimension_index
-  UNION ALL
-  SELECT 'spicefield_current_active', coalesce(sum(current_globally_active), 0)::bigint
-    FROM dune.spicefield_types s, target t
-    WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
-  UNION ALL
-  SELECT 'spicefield_current_primed', coalesce(sum(current_globally_primed), 0)::bigint
-    FROM dune.spicefield_types s, target t
-    WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
 ) counts
 ORDER BY metric;
+
+\if :spicefield_types_present
+WITH target AS (
+  SELECT current_setting('pvp_dd.spice_map') AS spice_map,
+         current_setting('pvp_dd.dimension_index')::integer AS dimension_index
+)
+SELECT 'spicefield_current_active' AS metric,
+       coalesce(sum(current_globally_active), 0)::bigint AS count
+FROM dune.spicefield_types s, target t
+WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index
+UNION ALL
+SELECT 'spicefield_current_primed',
+       coalesce(sum(current_globally_primed), 0)::bigint
+FROM dune.spicefield_types s, target t
+WHERE s.map_name = t.spice_map AND s.dimension_index = t.dimension_index;
+\else
+\echo spicefield_types is absent; spice-field metrics skipped
+\endif
 SQL
 fi

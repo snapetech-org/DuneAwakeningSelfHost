@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -21,59 +22,20 @@ WIDTH = 1600
 HEIGHT = 1600
 PUBLIC_VIEWBOX_WIDTH = 2133.333
 PUBLIC_X_SCALE = PUBLIC_VIEWBOX_WIDTH / WIDTH
-
-
-def env_file_values(path):
-    values = {}
-    if not path.exists():
-        return values
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def resolved_game_env_file():
-    raw = os.environ.get("DUNE_ENV_FILE") or os.environ.get("ENV_FILE") or ".env"
-    path = pathlib.Path(raw)
-    if not path.is_absolute():
-        path = DUNE_ROOT / path
-    return path
-
-
-GAME_ENV_FILE = resolved_game_env_file()
-ENV = env_file_values(GAME_ENV_FILE)
+COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME", "dune_server")
+_POSTGRES_CONTAINER = ""
 
 
 def public_env_value(key, default=""):
-    return os.environ.get(key) or ENV.get(key) or default
+    return os.environ.get(key) or default
 
 
-def game_env_value(*keys, default=""):
-    for key in keys:
-        value = ENV.get(key)
-        if value:
-            return value
-    for key in keys:
-        value = os.environ.get(key)
-        if value:
-            return value
-    return default
-
-
-DATABASE = game_env_value(
-    "DUNE_GAME_DB_NAME",
-    "DUNE_DATABASE",
-    "DUNE_DB_NAME",
-    default="dune_sb_1_4_0_0",
-)
+DATABASE = os.environ.get("DUNE_PUBLIC_STATUS_DB_NAME", "dune_sb_1_5_15_0")
 PEAKS_FILE = pathlib.Path(public_env_value(
     "DUNE_PLAYER_PEAKS_FILE",
     str(DUNE_ROOT / "backups" / "admin-panel" / "player-peaks.json"),
 ))
+
 
 
 def int_list_env(key, default):
@@ -85,7 +47,7 @@ def int_list_env(key, default):
     return values or [1, 2]
 
 
-CORE_PARTITION_IDS = int_list_env("DUNE_CORE_PARTITION_IDS", "1,2")
+CORE_PARTITION_IDS = int_list_env("DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS", "1,2")
 
 
 def bool_env(key, default):
@@ -114,44 +76,36 @@ CAL = {
 }
 
 
-def resolved_compose_files():
-    explicit = game_env_value("COMPOSE_FILES")
-    if explicit:
-        return [item for item in explicit.split(":") if item]
-
-    script = DUNE_ROOT / "scripts" / "compose-files.sh"
-    if script.exists() and os.access(script, os.X_OK):
-        try:
-            result = subprocess.run(
-                [str(script), str(GAME_ENV_FILE)],
-                cwd=DUNE_ROOT,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [item for item in result.stdout.strip().splitlines()[-1].split(":") if item]
-        except Exception:
-            pass
-
-    default_files = game_env_value("DUNE_DEFAULT_COMPOSE_FILES", default="compose.yaml:compose.allmaps.yaml")
-    return [item for item in default_files.split(":") if item]
-
-
-COMPOSE_FILES = resolved_compose_files()
+def postgres_container():
+    global _POSTGRES_CONTAINER
+    if _POSTGRES_CONTAINER:
+        return _POSTGRES_CONTAINER
+    output = subprocess.check_output(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=com.docker.compose.project={COMPOSE_PROJECT_NAME}",
+            "--filter",
+            "label=com.docker.compose.service=postgres",
+            "--format",
+            "{{.ID}}",
+        ],
+        cwd=DUNE_ROOT,
+        text=True,
+        timeout=10,
+    )
+    _POSTGRES_CONTAINER = output.strip().splitlines()[0] if output.strip() else ""
+    if not _POSTGRES_CONTAINER:
+        raise RuntimeError("no running Postgres container found for the public status project")
+    return _POSTGRES_CONTAINER
 
 
-def compose_psql(sql):
-    cmd = ["docker", "compose"]
-    for compose_file in COMPOSE_FILES:
-        cmd.extend(["-f", compose_file])
-    cmd.extend([
-        "--env-file", str(GAME_ENV_FILE),
+def docker_psql(sql):
+    cmd = [
+        "docker",
         "exec",
-        "-T",
-        "postgres",
+        postgres_container(),
         "psql",
         "-U",
         "dune",
@@ -163,7 +117,7 @@ def compose_psql(sql):
         "-A",
         "-c",
         "copy (" + sql + ") to stdout",
-    ])
+    ]
     return subprocess.check_output(cmd, cwd=DUNE_ROOT, text=True, timeout=20)
 
 
@@ -187,7 +141,7 @@ def load_rows():
             order by ps.character_name nulls last, ps.account_id
         ) t
     """
-    text = compose_psql(sql).strip() or "[]"
+    text = docker_psql(sql).strip() or "[]"
     return json.loads(text)
 
 
@@ -198,18 +152,18 @@ def load_deep_desert_markers():
             select m.marker_hash_id,
                    m.dimension_index,
                    m.area_id,
-                   (m.marker).marker_type as marker_type,
-                   (m.marker).x::float8 as x,
-                   (m.marker).y::float8 as y,
-                   (m.marker).z::float8 as z,
+                   m.marker_type,
+                   (m.position).x::float8 as x,
+                   (m.position).y::float8 as y,
+                   (m.position).z::float8 as z,
                    m.area_radius::float8 as area_radius
             from dune.markers m
             join dune.map_names mn on mn.map_name_id = m.map_name_id
             where mn.map_name = 'DeepDesert'
-            order by m.dimension_index, (m.marker).marker_type, m.marker_hash_id
+            order by m.dimension_index, m.marker_type, m.marker_hash_id
         ) t
     """
-    text = compose_psql(sql).strip() or "[]"
+    text = docker_psql(sql).strip() or "[]"
     return json.loads(text)
 
 
@@ -238,29 +192,20 @@ def load_deep_desert_layout_state():
                 ) s
             ), '[]'::json),
             'resourceFields', coalesce((
-                select json_agg(row_to_json(r) order by r.dimension_index, r.field_kind_id, r.spawn_time)
+                select json_agg(row_to_json(r) order by r.dimension_index, r.field_id, r.spawn_time)
                 from (
-                    select map, dimension_index, field_kind_id, field_id,
+                    select map, dimension_index, field_id,
                            spawn_time::float8 as spawn_time,
                            value_remaining::bigint as value_remaining
                     from dune.resourcefield_state
                     where map = 'DeepDesert'
                 ) r
             ), '[]'::json),
-            'spiceFields', coalesce((
-                select json_agg(row_to_json(st) order by st.dimension_index, st.field_type)
-                from (
-                    select field_type, map_name, dimension_index, spicefield_type_id,
-                           max_globally_primed, max_globally_active,
-                           current_globally_primed, current_globally_active,
-                           is_spawning_active, global_spawn_weight::float8 as global_spawn_weight
-                    from dune.spicefield_types
-                    where map_name = 'DeepDesert'
-                ) st
-            ), '[]'::json)
+            'spiceFields', '[]'::json,
+            'spiceFieldsAvailable', false
         )
     """
-    text = compose_psql(sql).strip() or "{}"
+    text = docker_psql(sql).strip() or "{}"
     return json.loads(text)
 
 
@@ -268,16 +213,8 @@ def load_deep_desert_observations():
     sql = r"""
         select json_build_object(
             'source', 'live DB passive observation',
-            'spiceAvailability', coalesce((
-                select json_agg(row_to_json(a) order by a.dimension_index, a.field_type, a.server_id)
-                from (
-                    select st.field_type, st.dimension_index, sa.server_id,
-                           sa.inactive_fields_of_type, sa.requested_spawned_of_type
-                    from dune.spicefield_server_availability sa
-                    join dune.spicefield_types st on st.spicefield_type_id = sa.spicefield_type_id
-                    where st.map_name = 'DeepDesert'
-                ) a
-            ), '[]'::json),
+            'spiceAvailability', '[]'::json,
+            'spiceAvailabilityAvailable', false,
             'shipwreckSpawners', coalesce((
                 select json_agg(row_to_json(s) order by s.dimension_index, s.name, s.id)
                 from (
@@ -295,7 +232,7 @@ def load_deep_desert_observations():
             ), '[]'::json)
         )
     """
-    text = compose_psql(sql).strip() or "{}"
+    text = docker_psql(sql).strip() or "{}"
     return json.loads(text)
 
 
@@ -331,7 +268,7 @@ def load_map_health():
             order by wp.partition_id
         ) t
     """
-    text = compose_psql(sql).strip() or "[]"
+    text = docker_psql(sql).strip() or "[]"
     return json.loads(text)
 
 
@@ -569,6 +506,11 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ob
         for row in spice_availability
         if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
     )
+    spice_availability_text = (
+        str(large_inactive)
+        if observations.get("spiceAvailabilityAvailable")
+        else "unavailable"
+    )
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="none" role="img" aria-label="Deep Desert operational map derived from server markers">
 <style>
 .bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.pointLabel{{fill:#fff;font:700 18px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
@@ -585,7 +527,7 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ob
 <rect x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="122" fill="#171512" opacity=".82"/>
 <text x="22" y="38" class="meta">Deep Desert Map</text>
 <text x="22" y="66" class="meta">{html.escape(seed_text)} | resource fields {len(resource_fields)} | spice {html.escape(spice_text)}</text>
-<text x="22" y="94" class="meta">Passive tracker: no resource heatmap points; shipwreck candidates {len(shipwreck_spawners)}; inactive Large spice candidates {large_inactive}</text>
+<text x="22" y="94" class="meta">Passive tracker: no resource heatmap points; shipwreck candidates {len(shipwreck_spawners)}; inactive Large spice candidates {spice_availability_text}</text>
 <text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | verified player points only | saved DB markers and unlocated observations are not authoritative map points</text>
 {''.join(legend_items)}
 </svg>
@@ -641,6 +583,64 @@ def write_snapshot_error(errors, generated):
         "preserved": (STATIC_DIR / "players.json").exists(),
     }
     error_file.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def request_directory_signature(snapshot, config):
+    signer_config = {
+        "DUNE_PUBLIC_DIRECTORY_ENABLED": "true",
+        "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": config["entryUrl"],
+        "DUNE_PUBLIC_SITE_URL": config["siteUrl"],
+        "DUNE_PUBLIC_DIRECTORY_REGION": config["region"],
+        "DUNE_PUBLIC_DIRECTORY_CAPACITY": str(config["capacity"]),
+        "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS": str(config["ttlSeconds"]),
+        "DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE": config["discordInvite"],
+        "DUNE_PUBLIC_DIRECTORY_NAME": config["name"],
+        "DUNE_PUBLIC_DIRECTORY_DESCRIPTION": config["description"],
+        "DUNE_IMAGE_TAG": config["build"],
+    }
+    signer_snapshot = {
+        "ok": bool(snapshot.get("ok")),
+        "onlineCount": int(snapshot.get("onlineCount") or 0),
+        "mapHealth": snapshot.get("mapHealth") or {},
+        "sietches": sum(
+            1 for row in (snapshot.get("mapStatus") or [])
+            if str(row.get("map") or "").lower() in ("survival_1", "survival")
+        ),
+    }
+    request = json.dumps(
+        {"config": signer_config, "snapshot": signer_snapshot},
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    if len(request) > 262_144:
+        raise ValueError("public directory signing request exceeds its size limit")
+
+    socket_path = os.environ.get(
+        "DUNE_PUBLIC_DIRECTORY_SIGNER_SOCKET",
+        "/run/dune-public-directory-signer.sock",
+    )
+    response = bytearray()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(15)
+        client.connect(socket_path)
+        client.sendall(request)
+        client.shutdown(socket.SHUT_WR)
+        while len(response) <= 262_144:
+            chunk = client.recv(min(16_384, 262_145 - len(response)))
+            if not chunk:
+                break
+            response.extend(chunk)
+            if b"\n" in chunk:
+                break
+    if len(response) > 262_144:
+        raise ValueError("public directory signer response exceeds its size limit")
+    result = json.loads(bytes(response).split(b"\n", 1)[0])
+    if not isinstance(result, dict) or result.get("ok") is not True or result.get("enabled") is not True:
+        raise RuntimeError("public directory signer rejected the request")
+    entry = result.get("entry")
+    if not isinstance(entry, dict):
+        raise ValueError("public directory signer returned no entry")
+    public_directory.verify_entry(entry, expected_url=config["entryUrl"])
+    return entry
 
 
 def main():
@@ -710,6 +710,7 @@ def main():
             "mapSeed": (deep_desert_layout.get("seeds") or {}).get("map"),
             "shiftingSandsRows": len(deep_desert_layout.get("shiftingSands") or []),
             "resourceFields": len(deep_desert_layout.get("resourceFields") or []),
+            "spiceFieldsAvailable": bool(deep_desert_layout.get("spiceFieldsAvailable")),
             "spiceFields": [
                 {key: value for key, value in row.items() if key not in ("is_spawning_active", "global_spawn_weight")}
                 for row in (deep_desert_layout.get("spiceFields") or [])
@@ -722,6 +723,7 @@ def main():
                 for row in (deep_desert_observations.get("spiceAvailability") or [])
                 if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
             ),
+            "spiceAvailabilityAvailable": bool(deep_desert_observations.get("spiceAvailabilityAvailable")),
             "source": deep_desert_observations.get("source") or "live DB passive observation",
         },
         "players": public_players,
@@ -736,16 +738,18 @@ def main():
     (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
     (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_observations), encoding="utf-8")
     try:
-        directory_config = public_directory.public_config({**ENV, **os.environ}, root=DUNE_ROOT)
-        public_directory.publish(
-            snapshot,
-            directory_config,
-            output_file=STATIC_DIR / "directory-entry.json",
-            now=generated_dt,
-        )
+        directory_config = public_directory.public_config(os.environ, root=DUNE_ROOT)
+        directory_output = STATIC_DIR / "directory-entry.json"
+        if not directory_config.get("enabled"):
+            pathlib.Path(directory_config["stateFile"]).unlink(missing_ok=True)
+            directory_output.unlink(missing_ok=True)
+        else:
+            entry = request_directory_signature(snapshot, directory_config)
+            public_directory.atomic_json(directory_config["stateFile"], entry)
+            public_directory.atomic_json(directory_output, entry)
     except Exception as exc:
-        errors["publicDirectory"] = str(exc)
-        print(f"public directory publication failed: {exc}", file=sys.stderr)
+        errors["publicDirectory"] = type(exc).__name__
+        print(f"public directory publication failed: {type(exc).__name__}", file=sys.stderr)
     return 0 if ok and not errors else 1
 
 

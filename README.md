@@ -2,7 +2,7 @@
 
 DASH is a Linux/Docker Compose operations harness for the official Steam-installed **Dune: Awakening Self-Hosted Server** package.
 
-Support DASH development on [Ko-fi](https://ko-fi.com/snapetech).
+Support DASH development through [PayPal](https://www.paypal.com/donate/?business=donations%40snape.tech) or [Ko-fi](https://ko-fi.com/snapetech).
 
 It turns Funcom's self-host stack into a reproducible local layout with Compose services, startup and recovery scripts, a LAN/VPN admin panel, backup tooling, optional Postgres replication, warm-pool map startup, restart automation, player/admin utilities, and a public static site package that does not expose private control surfaces.
 
@@ -1024,12 +1024,13 @@ The admin panel exposes the same workflow under `Settings -> Artificial Exchange
 
 Start from [`.env.example`](.env.example). It is the source of truth for the full setting list.
 
-> **Server-browser labels are intentionally different:**
+> **Keep all server-browser title fields identical:**
 >
-> - Parent/top row: `[gateway].display_name` in `config/gateway.ini` — use the branded server title.
-> - Nested/details row: `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` — use the feature-list description.
+> - Parent/top row: `[gateway].display_name` in `config/gateway.ini`.
+> - Gateway registration: `PUBLIC_SERVER_NAME` in `.env` (falls back to `WORLD_NAME`).
+> - Nested/details row: `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME`.
 >
-> Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
+> Set each to the exact same approved server name so the browser does not combine different titles.
 
 ### Server identity and infrastructure
 
@@ -1037,8 +1038,9 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | --- | --- |
 | `DUNE_STEAM_SERVER_DIR` | Local path to the official Steam self-host tool. |
 | `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; current example baseline is `1968181-0-shipping`. |
-| `WORLD_NAME` | Server-browser nested/details row. Use the feature-list description here. |
+| `WORLD_NAME` | Server-browser name used by map and directory services. Keep it equal to the other title fields. |
 | `DUNE_SERVER_DISPLAY_NAME` | Server-browser nested/details row injected into game config. Keep it equal to `WORLD_NAME`. |
+| `PUBLIC_SERVER_NAME` | Gateway registration and public-site title. Keep it equal to `WORLD_NAME`; the gateway defaults to `WORLD_NAME` when unset. |
 | `WORLD_UNIQUE_NAME` | Durable FLS battlegroup identity; back up `.env` and do not rotate after first registration. |
 | `WORLD_REGION` | Region string used by the server configuration. |
 | `DUNE_FLS_ENV` | FLS environment passed to game-server commands; keep `retail` unless using a matching PTC/test build. |

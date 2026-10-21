@@ -52,7 +52,8 @@ class PatchTarget(NamedTuple):
 # the fail-block that writes Fail_DisallowedBuildLimit (enum value 0x6b, see
 # docs/subfief-cap-enum-table.md) is never reached. Ghidra confirmed this is
 # the only path that writes the enum byte at struct offset +0x18 from this
-# code path. Build hash 9bf5fbdef43a6d6d… reproduces this signature uniquely.
+# code path. The signature was originally identified on an older build and
+# revalidated as a unique match on the current 1.5.3/2111270 server image.
 #
 # `new_cap` is accepted for API symmetry with the building-piece patcher but
 # is ignored — the patch is a hard bypass, not a numeric cap raise. If

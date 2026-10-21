@@ -1,0 +1,30 @@
+[Unit]
+Description=Isolated signer for the public Dune directory entry
+After=local-fs.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+UMask=0077
+LoadCredential=public-directory-ed25519.pem:__SIGNING_KEY_PATH__
+Environment=DUNE_PUBLIC_DIRECTORY_MODULE_DIR=/usr/local/libexec/dune-public-directory
+ExecStart=/usr/bin/python3 /usr/local/libexec/dune-public-directory-signer.py
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=20s
+MemoryMax=64M
+TasksMax=16
+LimitNOFILE=64
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=

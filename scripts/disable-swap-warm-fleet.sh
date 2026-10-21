@@ -39,6 +39,7 @@ case "${1:-}" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repo_root/scripts/lib/snape-curl-auth.sh"
 cd "$repo_root"
 env_file="${1:-${ENV_FILE:-.env}}"
 target_mode="${2:-dynamic}"

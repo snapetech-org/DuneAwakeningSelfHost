@@ -1,0 +1,16 @@
+services:
+  survival:
+    environment:
+      DUNE_PROBE_LOADER_LUA_LIBRARY: ${DUNE_PROBE_LOADER_LUA_LIBRARY:-/usr/lib/x86_64-linux-gnu/liblua5.4.so.0}
+    volumes:
+      - ${DUNE_PROBE_LOADER_LUA_LIBRARY_HOST:-/home/keith/.local/share/dune-server-lua-runtime/liblua5.4.so.0}:/usr/lib/x86_64-linux-gnu/liblua5.4.so.0:ro
+  deep-desert:
+    environment:
+      DUNE_PROBE_LOADER_LUA_LIBRARY: ${DUNE_PROBE_LOADER_LUA_LIBRARY:-/usr/lib/x86_64-linux-gnu/liblua5.4.so.0}
+    volumes:
+      - ${DUNE_PROBE_LOADER_LUA_LIBRARY_HOST:-/home/keith/.local/share/dune-server-lua-runtime/liblua5.4.so.0}:/usr/lib/x86_64-linux-gnu/liblua5.4.so.0:ro
+  deep-desert-pvp:
+    environment:
+      DUNE_PROBE_LOADER_LUA_LIBRARY: ${DUNE_PROBE_LOADER_LUA_LIBRARY:-/usr/lib/x86_64-linux-gnu/liblua5.4.so.0}
+    volumes:
+      - ${DUNE_PROBE_LOADER_LUA_LIBRARY_HOST:-/home/keith/.local/share/dune-server-lua-runtime/liblua5.4.so.0}:/usr/lib/x86_64-linux-gnu/liblua5.4.so.0:ro

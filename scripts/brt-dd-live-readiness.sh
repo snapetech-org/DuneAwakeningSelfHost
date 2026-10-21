@@ -31,13 +31,18 @@ wait_seconds="${DUNE_BRT_DD_RESTART_WAIT_SECONDS:-300}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 target_config="config/UserGame.deep-desert-coriolis.ini"
 copied_config="/home/dune/server/DuneSandbox/Saved/UserSettings/UserGame.ini"
+target_custom_config="config/UserServerCustomSettings.ini"
+copied_custom_config="/home/dune/server/DuneSandbox/Saved/UserSettings/ServerCustomSettings.ini"
 
 required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert'
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
   'm_BaseBackupToolMapRestriction=.*DeepDesert'
   'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
-  'm_bBuildingRestrictionLimitsEnabled=False'
+)
+
+required_custom_config_patterns=(
+  'bIsBuildingRestrictionsEnabled=False'
 )
 
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
@@ -114,7 +119,7 @@ assert_live_host_for_mutation() {
 }
 
 check_repo_config() {
-  local rendered
+  local rendered custom_rendered pattern
   if [[ ! -f "$target_config" ]]; then
     printf 'missing target config: %s\n' "$target_config" >&2
     return 1
@@ -127,7 +132,19 @@ check_repo_config() {
       return 1
     fi
   done
-  printf 'repo_config=%s contains DeepDesert and DeepDesert_1 landclaim and BRT map restriction entries\n' "$target_config"
+  if [[ ! -f "$target_custom_config" ]]; then
+    printf 'missing target custom config: %s\n' "$target_custom_config" >&2
+    return 1
+  fi
+  custom_rendered="$(cat "$target_custom_config")"
+  for pattern in "${required_custom_config_patterns[@]}"; do
+    if ! grep -Eq "$pattern" <<<"$custom_rendered"; then
+      printf 'missing repo custom config pattern in %s: %s\n' "$target_custom_config" "$pattern" >&2
+      return 1
+    fi
+  done
+  printf 'repo_config=%s contains DeepDesert and DeepDesert_1 landclaim/BRT map entries and %s contains replicated BRT restriction settings\n' \
+    "$target_config" "$target_custom_config"
 }
 
 check_compose_surface() {
@@ -141,8 +158,11 @@ check_compose_surface() {
     || { printf 'compose service %s does not launch DeepDesert_1\n' "$service" >&2; return 1; }
   grep -Fq -- '-PartitionIndex=8' <<<"$rendered" \
     || { printf 'compose service %s does not use partition %s\n' "$service" "$partition_id" >&2; return 1; }
+  grep -Fq 'DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.ini' <<<"$rendered" \
+    || { printf 'compose service %s does not use %s\n' "$service" "$target_custom_config" >&2; return 1; }
 
-  printf 'compose_service=%s uses DeepDesert_1 partition %s and %s\n' "$service" "$partition_id" "$target_config"
+  printf 'compose_service=%s uses DeepDesert_1 partition %s, %s, and %s\n' \
+    "$service" "$partition_id" "$target_config" "$target_custom_config"
 }
 
 postgres_id() {
@@ -184,7 +204,7 @@ verify_db_partition() {
 
 verify_copied_config() {
   local mode="${1:-optional}"
-  local id rendered pattern
+  local id rendered custom_rendered pattern
   id="$(container_id)"
   if [[ -z "$id" ]]; then
     if [[ "$mode" == "optional" ]]; then
@@ -202,7 +222,15 @@ verify_copied_config() {
       return 1
     fi
   done
-  printf 'copied_config=%s contains DeepDesert landclaim and BRT map restriction candidate\n' "$copied_config"
+  custom_rendered="$("$runtime" exec "$id" sh -lc "test -f '$copied_custom_config' && cat '$copied_custom_config'")"
+  for pattern in "${required_custom_config_patterns[@]}"; do
+    if ! grep -Eq "$pattern" <<<"$custom_rendered"; then
+      printf 'missing copied custom config pattern in %s: %s\n' "$copied_custom_config" "$pattern" >&2
+      return 1
+    fi
+  done
+  printf 'copied_config=%s contains DeepDesert landclaim/BRT map entries and %s contains replicated BRT restriction settings\n' \
+    "$copied_config" "$copied_custom_config"
 }
 
 preflight() {

@@ -599,7 +599,7 @@ def _run_one(docker, name, state, stage, host_stage, image, run_uid, run_gid,
             # case `rabbitmqctl status` and every topology query will fail.
             # `check_running` does not succeed until the recovered `rabbit`
             # application itself is running.
-            code, _ = docker.exec(container, ["rabbitmq-diagnostics", "-q", "check_running"], timeout=15)
+            code, _ = docker.exec(container, ["rabbitmq-diagnostics", "-q", "check_running"], timeout=60)
             if code == 0:
                 ready = True; break
             sleep(1)

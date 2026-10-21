@@ -399,6 +399,44 @@ Its backend arrays resolve to `30 30 0 0` and `300 300 0 0`; its three UI
 arrays resolve to `300 300 0 0`. The known entry still runs all live pointer,
 float, and instruction-byte validation before writing.
 
+Build `1d03e11f7a9161d3755e3aec4cbda3eb924193ae` uses backend globals at
+`0x172fed50` and `0x172fed68`, clamp instruction `0x0da7dac4`, duration
+instruction `0x0da7ded1`, and UI pointer slots `0x174eef00`, `0x174eef18`, and
+`0x174eef30`. This build split the UI timer loads across code paths, so the
+older three-load scanner did not recognize it. The offsets were verified by
+live dry runs on Survival and both Deep Desert maps: backend arrays resolved
+to `30 30 0 0` and `300 300 0 0`, the three UI slots each resolved to a
+separate four-float array, and the clamp and duration bytes matched. The UI
+arrays were `0 0 0 0` while no UI logoff countdown was active.
+
+Build `2124138-0-shipping` / Steam build `25486303` has ELF Build ID
+`39e7aabe1c6201e43b81254e1c54631f8f16c8df`. On this build the verified
+server timer pointer slots are `0x173089f0` and `0x17308a08`; they resolve to
+`30 30 0 0` and `300 300 0 0`. The deadline clamp instruction at
+`0x0da84274` is `48 01 c1`, and the duration instruction at `0x0da84681` is
+`c5 fa 10 45 d4`. The older UI-array signature matched unrelated vectors on
+this build, so the runtime patch now validates and writes only the server
+timer arrays and those two instructions. A post-apply dry run read back zeroed
+timer values and patched instruction bytes on Survival, Deep Desert, and
+Deep Desert PvP. UI countdown arrays are not targeted by this build entry.
+
+Build `50d73d6403583bbcad919119c08d5083181c4d51` was captured from the live
+Survival process on 2026-10-17 (binary SHA-256
+`bcb6bc6b3c7ada038400716eb34c8812cb98a9d8b8eb360262b203e753c64c6b`). The
+verified backend pointer slots are `0x1731ebf0` and `0x1731ec08`, the deadline
+clamp is at `0x0da907d4`, and the timer-duration reload is at `0x0da90be1`.
+Before patching, live dry runs on Survival and both Deep Desert maps resolved
+the arrays to `30 30 0 0` and `300 300 0 0`, with original instruction bytes
+`48 01 c1` and `c5 fa 10 45 d4`. The UI auto-remapper found no unique candidate,
+so this build uses the verified backend-only patch path; client-visible timer
+arrays remain untargeted.
+
+After applying the patch to all three live maps, a second dry run verified both
+backend arrays as `0 0 0 0`, the deadline clamp as `48 89 c1`, and the duration
+reload as `c5 f8 57 c0 90`. The map containers remained running, and the farm
+health summary reported 31 ready/alive/active partitions, both required core
+partitions connected, and healthy FLS publication.
+
 Force the auto-remap path for a dry-run test with:
 
 ```bash

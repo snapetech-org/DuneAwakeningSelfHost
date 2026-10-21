@@ -2,13 +2,27 @@
 set -euo pipefail
 
 env_file="${1:-.env}"
+PUBLIC_SUMMARY=false
+if [[ "${1:-}" == "--public-summary" ]]; then
+  env_file=""
+  PUBLIC_SUMMARY=true
+elif [[ "${2:-}" == "--public-summary" ]]; then
+  PUBLIC_SUMMARY=true
+  # The public page needs the existing farm state only. Do not rescan map
+  # assets or regenerate the worker overlay on every status refresh.
+  export DUNE_MAP_AUTO_DISCOVERY_ENABLED=false
+fi
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -x "$script_dir/compose-files.sh" ]]; then
+if [[ "$PUBLIC_SUMMARY" != true && -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
   export COMPOSE_FILES
 fi
-compose=("$container_runtime" compose)
+if [[ "$PUBLIC_SUMMARY" == true ]]; then
+  compose=()
+else
+  compose=("$container_runtime" compose)
+fi
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
 for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
@@ -27,10 +41,45 @@ env_value() {
   ' "$env_file" 2>/dev/null
 }
 
-db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
-db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
-db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
-db="${db:-dune_sb_1_4_0_0}"
+postgres_container=""
+game_rmq_container=""
+admin_rmq_container=""
+if [[ "$PUBLIC_SUMMARY" == true ]]; then
+  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-dune_server}"
+  db="${DUNE_PUBLIC_STATUS_DB_NAME:-dune_sb_1_4_0_0}"
+  core_partition_ids="${DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS:-1,2}"
+  container_for_service() {
+    "$container_runtime" ps -q \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$1" | head -n 1
+  }
+  postgres_container="$(container_for_service postgres)"
+  game_rmq_container="$(container_for_service game-rmq)"
+  admin_rmq_container="$(container_for_service admin-rmq)"
+else
+  db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
+  db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
+  db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
+  db="${db:-dune_sb_1_4_0_0}"
+  core_partition_ids="${DUNE_CORE_PARTITION_IDS:-$(env_value DUNE_CORE_PARTITION_IDS)}"
+fi
+
+service_exec() {
+  local service="$1" container_id=""
+  shift
+  if [[ "$PUBLIC_SUMMARY" == true ]]; then
+    case "$service" in
+      postgres) container_id="$postgres_container" ;;
+      game-rmq) container_id="$game_rmq_container" ;;
+      admin-rmq) container_id="$admin_rmq_container" ;;
+      *) return 2 ;;
+    esac
+    [[ -n "$container_id" ]] || return 1
+    "$container_runtime" exec "$container_id" "$@"
+  else
+    "${compose[@]}" exec -T "$service" "$@"
+  fi
+}
 
 redact() {
   sed -E \
@@ -46,55 +95,59 @@ redact() {
     -e 's/sh-[0-9a-fA-F]{16}-[A-Za-z0-9]+/sh-[redacted]/g'
 }
 
-echo "== containers =="
-"${compose[@]}" ps
+if [[ "$PUBLIC_SUMMARY" != true ]]; then
+  echo "== containers =="
+  "${compose[@]}" ps
 
-container_ids="$("${compose[@]}" ps -q 2>/dev/null || true)"
+  container_ids="$("${compose[@]}" ps -q 2>/dev/null || true)"
 
-if [[ -n "$container_ids" ]]; then
-  echo
-  echo "== resource snapshot =="
-  "$container_runtime" stats --no-stream --format \
-    'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}' \
-    $container_ids \
-    || true
+  if [[ -n "$container_ids" ]]; then
+    echo
+    echo "== resource snapshot =="
+    "$container_runtime" stats --no-stream --format \
+      'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}' \
+      $container_ids \
+      || true
 
-  echo
-  echo "== restart counts =="
-  "$container_runtime" inspect \
-    --format '{{ index .Config.Labels "com.docker.compose.service" }} restart_count={{ .RestartCount }} oom_killed={{ .State.OOMKilled }} status={{ .State.Status }}' \
-    $container_ids \
-    | sort \
-    || true
+    echo
+    echo "== restart counts =="
+    "$container_runtime" inspect \
+      --format '{{ index .Config.Labels "com.docker.compose.service" }} restart_count={{ .RestartCount }} oom_killed={{ .State.OOMKilled }} status={{ .State.Status }}' \
+      $container_ids \
+      | sort \
+      || true
+  fi
 fi
 
 echo
 echo "== health verdict =="
-current_ready_alive="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+current_ready_alive="$(service_exec postgres psql -U dune -d "$db" -Atc "
 select count(*)
 from dune.world_partition wp
 join dune.farm_state fs on fs.server_id = wp.server_id
 join dune.active_server_ids asi on asi.server_id = wp.server_id
 where fs.ready and fs.alive;
 " 2>/dev/null || printf '0')"
-current_alive_active="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+current_alive_active="$(service_exec postgres psql -U dune -d "$db" -Atc "
 select count(*)
 from dune.world_partition wp
 join dune.farm_state fs on fs.server_id = wp.server_id
 join dune.active_server_ids asi on asi.server_id = wp.server_id
 where fs.alive;
 " 2>/dev/null || printf '0')"
-active_servers="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.active_server_ids;" 2>/dev/null || printf '0')"
-partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
-game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
-admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
-core_partition_ids="${DUNE_CORE_PARTITION_IDS:-$(env_value DUNE_CORE_PARTITION_IDS)}"
+active_servers="$(service_exec postgres psql -U dune -d "$db" -Atc "select count(*) from dune.active_server_ids;" 2>/dev/null || printf '0')"
+partitions="$(service_exec postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
+game_sg_connections="$(service_exec game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
+admin_sg_connections="$(service_exec admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
+if [[ "$PUBLIC_SUMMARY" != true ]]; then
+  core_partition_ids="${DUNE_CORE_PARTITION_IDS:-$(env_value DUNE_CORE_PARTITION_IDS)}"
+fi
 core_partition_ids="${core_partition_ids:-1,2}"
 if [[ ! "$core_partition_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
   echo "WARN: invalid DUNE_CORE_PARTITION_IDS; using survival/overmap partitions 1,2."
   core_partition_ids="1,2"
 fi
-core_health="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+core_health="$(service_exec postgres psql -U dune -d "$db" -Atc "
 select
   count(*) filter (where fs.ready and fs.alive and asi.server_id is not null) || ' ' ||
   count(*) filter (where fs.alive and asi.server_id is not null) || ' ' ||
@@ -130,15 +183,24 @@ printf 'core_ready_alive=%s core_alive_active=%s core_active_servers=%s core_par
 
 echo
 echo "== FLS publication health =="
-if "$script_dir/fls-publication-health.py" "$env_file" --compose-files "${COMPOSE_FILES:-compose.yaml}"; then
+if [[ "$PUBLIC_SUMMARY" == true ]]; then
+  fls_health_command=("$script_dir/fls-publication-health.py")
+else
+  fls_health_command=("$script_dir/fls-publication-health.py" "$env_file" --compose-files "${COMPOSE_FILES:-compose.yaml}")
+fi
+if "${fls_health_command[@]}"; then
   :
 else
   echo "WARN: FLS publication health is degraded. The local farm can be healthy while the server browser is stale/offline."
 fi
 
+if [[ "$PUBLIC_SUMMARY" == true ]]; then
+  exit 0
+fi
+
 echo
 echo "== database state =="
-"${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "
+service_exec postgres psql -U dune -d "$db" -c "
 select
   wp.partition_id,
   wp.server_id,
@@ -186,13 +248,13 @@ select
 
 echo
 echo "== rabbitmq game connections =="
-"${compose[@]}" exec -T game-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
+service_exec game-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
   | redact \
   || true
 
 echo
 echo "== rabbitmq admin connections =="
-"${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
+service_exec admin-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
   | redact \
   || true
 

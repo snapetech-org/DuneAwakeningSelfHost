@@ -149,7 +149,7 @@ def find_container_id(service):
     for container in containers:
         if container.get("State") == "running":
             return container.get("Id")
-    return containers[0].get("Id") if containers else None
+    return None
 
 
 def find_running_container_by_name(names):
@@ -180,23 +180,6 @@ def socket_container_logs(container_id, since):
     return redact(clean_docker_log_bytes(docker_api_raw(path, timeout=20))), None
 
 
-def compose_cmd(env_file, compose_files):
-    runtime = os.environ.get("CONTAINER_RUNTIME", "docker")
-    cmd = [runtime, "compose"]
-    for compose_file in compose_files.split(":"):
-        if compose_file:
-            cmd.extend(["-f", compose_file])
-    cmd.extend(["--env-file", env_file])
-    return cmd
-
-
-def service_running(base_cmd, service):
-    if not shutil.which(base_cmd[0]):
-        return find_container_id(service) is not None
-    result = run(base_cmd + ["ps", "-q", service], timeout=10)
-    return result.returncode == 0 and bool(result.stdout.strip())
-
-
 def fallback_container_logs(service, since):
     if service != "director":
         return "", None
@@ -223,22 +206,35 @@ def fallback_container_logs(service, since):
     return "", None
 
 
-def service_logs(base_cmd, service, since):
-    if not shutil.which(base_cmd[0]):
-        if service == "director":
-            logs, fallback_note = fallback_container_logs(service, since)
-            if fallback_note:
-                LOG_SOURCE_NOTES[service] = fallback_note
-                return logs, None
-        return socket_service_logs(service, since)
-    if not service_running(base_cmd, service):
+def service_logs(service, since):
+    runtime = os.environ.get("CONTAINER_RUNTIME", "docker")
+    result = run(
+        [
+            runtime,
+            "ps",
+            "-q",
+            "--filter",
+            "status=running",
+            "--filter",
+            f"label=com.docker.compose.project={DOCKER_COMPOSE_PROJECT}",
+            "--filter",
+            f"label=com.docker.compose.service={service}",
+        ],
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return "", f"could not list {service} container (runtime exit {result.returncode})"
+    container_ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not container_ids:
         logs, fallback_note = fallback_container_logs(service, since)
         if fallback_note:
             LOG_SOURCE_NOTES[service] = fallback_note
             return logs, None
         return "", f"{service} container is not running"
+    if len(container_ids) != 1:
+        return "", f"expected one running {service} container; found {len(container_ids)}"
     result = run(
-        base_cmd + ["logs", "--since", since, "--tail", str(configured_log_tail()), service],
+        [runtime, "logs", "--since", since, "--tail", str(configured_log_tail()), container_ids[0]],
         timeout=20,
     )
     text = redact((result.stdout or "") + "\n" + (result.stderr or ""))
@@ -279,9 +275,11 @@ def has_positive_jsonish_field(lines, field_name):
 
 def evaluate(env_file, compose_files, since):
     LOG_SOURCE_NOTES.clear()
-    base = compose_cmd(env_file, compose_files)
-    director_log, director_error = service_logs(base, "director", since)
-    gateway_log, gateway_error = service_logs(base, "gateway", since)
+    # env_file and compose_files remain accepted for CLI compatibility. Health
+    # checks use running-container labels and logs and never parse the
+    # credential-bearing Dune .env file.
+    director_log, director_error = service_logs("director", since)
+    gateway_log, gateway_error = service_logs("gateway", since)
     director_lines = director_log.splitlines()
     gateway_lines = gateway_log.splitlines()
 
@@ -292,8 +290,8 @@ def evaluate(env_file, compose_files, since):
     # full container log when checking that the one-time declaration ever
     # happened. The since-windowed gateway_lines is still used for "no errors
     # after declaration" so we catch a fresh failure within the window.
-    # 9999h covers any plausible container uptime; docker compose accepts it.
-    gateway_full_log, gateway_full_error = service_logs(base, "gateway", "9999h")
+    # 9999h covers any plausible container uptime.
+    gateway_full_log, gateway_full_error = service_logs("gateway", "9999h")
     gateway_full_lines = gateway_full_log.splitlines()
 
     initialize_idx = last_index(director_lines, '("api/Director_InitializeDirector") Request successful')

@@ -142,7 +142,7 @@ runtime_detail_html="Runtime data unavailable."
 status_detail_text="Live status is being checked."
 runtime_farm_ready=false
 
-if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
+if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh --public-summary) >"$tmp_status" 2>&1; then
   health_line="$(sed -nE 's/^current_ready_alive=([0-9]+) current_alive_active=([0-9]+) active_servers=([0-9]+) partitions=([0-9]+) game_sg_connections=([0-9]+) admin_sg_connections=([0-9]+).*/\1 \2 \3 \4 \5 \6/p' "$tmp_status" | tail -1)"
   read -r current_ready_alive current_alive_active active_servers partitions game_sg_connections admin_sg_connections <<< "${health_line:-0 0 0 0 0 0}"
   core_health_line="$(sed -nE 's/^core_ready_alive=([0-9]+) core_alive_active=([0-9]+) core_active_servers=([0-9]+) core_partitions=([0-9]+).*/\1 \2 \3 \4/p' "$tmp_status" | tail -1)"
@@ -224,33 +224,16 @@ services = {
     "overland-s-06", "bandit-fortress", "overland-s-07", "overland-s-08",
     "dungeon-thepit",
 }
-project = os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server")
+project = os.environ.get("COMPOSE_PROJECT_NAME", os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server"))
 dune_root = os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost")
 restart_state_file = os.environ.get(
     "DUNE_PUBLIC_RESTART_STATE_FILE",
     os.path.join(dune_root, "backups", "admin-panel", "restart-jobs.json"),
 )
 
-def read_env_value(path, key):
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for raw in handle:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                name, value = line.split("=", 1)
-                if name.strip() == key:
-                    return value.strip().strip('"').strip("'")
-    except OSError:
-        pass
-    return ""
-
-partition_count = os.environ.get("DUNE_WORLD_PARTITION_COUNT") or read_env_value(
-    os.path.join(os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost"), ".env"),
-    "DUNE_WORLD_PARTITION_COUNT",
-)
-if partition_count == "31":
-    services.add("deep-desert-pvp")
+# This optional map appears in the runtime list only while its labeled
+# container is running, so no game .env value is needed to report it.
+services.add("deep-desert-pvp")
 
 def parse_started(value):
     if not value:
@@ -473,7 +456,7 @@ status_block="$(cat <<EOF
 </dl>
 <p class="status-detail">${status_detail_text}</p>
 <p class="status-updated">Last checked ${checked_at}.</p>
-<p class="status-support"><span>Support this server</span><a href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a></p>
+<p class="status-support"><span>Support this server</span><a href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer">PayPal</a><a href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a></p>
 </section>
 EOF
 )"

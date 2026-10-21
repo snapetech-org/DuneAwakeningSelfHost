@@ -13,7 +13,7 @@
   "dataPolicy": "sanitized deterministic fixtures; no live server, player, credential, log, or host data",
   "generatedFrom": "admin/admin_panel.py",
   "schemaVersion": 1,
-  "sourceSha256": "a8b69ac8c9f10912b8fddcdd4d4c68d6a4a92731c1687697c17f9669c85d4d6e",
+  "sourceSha256": "3a5098df73afaa3efd6ce16b7545efbf6912bde2867dc9d5642ed964ea275a2d",
   "viewport": {
     "deviceScaleFactor": 1,
     "height": 1000,

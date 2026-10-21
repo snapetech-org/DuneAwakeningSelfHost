@@ -46,6 +46,7 @@ actual_host="$(hostname -s 2>/dev/null || hostname)"
 [[ "$actual_host" == "$required_host" ]] || { printf 'refusing assured production deployment on %s; required host is %s\n' "$actual_host" "$required_host" >&2; exit 1; }
 
 code_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$code_root/scripts/lib/snape-curl-auth.sh"
 workspace="${workspace:-$code_root}"
 workspace="$(cd -- "$workspace" && pwd)"
 if [[ -n "$stage" ]]; then

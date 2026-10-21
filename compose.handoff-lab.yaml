@@ -94,14 +94,11 @@ services:
     command:
       - /workspace/scripts/run_server_safe.sh
       - -FarmRegion=${WORLD_REGION}
-      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
       - -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
       - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
-      - -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
       - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
       - -RMQGameTlsEnabled=true
       - -ExternalAddress=${EXTERNAL_ADDRESS}
       - --RMQGameHostname=game-rmq
@@ -118,9 +115,9 @@ services:
       NODE_NAME: dune-handoff-lab
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
-      DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
       DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
       DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
+      DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.survival.ini
       DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
       DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
       DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}

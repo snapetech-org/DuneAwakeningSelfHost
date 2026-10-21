@@ -32,16 +32,20 @@ x-game-server-env: &game-server-env
   DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
   DUNE_IGW_BIND_ADDRESS: ${DUNE_IGW_BIND_ADDRESS:-}
   DUNE_DISABLE_MULTIHOME: ${DUNE_DISABLE_MULTIHOME:-false}
+  DUNE_SERVER_CUSTOM_SETTINGS_PATH: ${DUNE_SERVER_CUSTOM_SETTINGS_PATH:-/workspace/config/UserServerCustomSettings.ini}
+  DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED:-false}
+  DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER: ${DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER:-}
+  DUNE_BUILDING_PIECE_LIMIT_MODE: ${DUNE_BUILDING_PIECE_LIMIT_MODE:-server-settings}
   DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
   DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
   DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}
   DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
   DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
   DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
-  DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
-  DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
+  DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: "false"
+  DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: "false"
+  DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: "false"
+  DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: "false"
   DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
 
 x-game-server-base: &game-server-base
@@ -82,6 +86,9 @@ x-game-server-command:
   rmq-game-host: &cmd-rmq-game-host --RMQGameHostname=game-rmq
   rmq-game-port: &cmd-rmq-game-port --RMQGamePort=5672
   rmq-admin-host: &cmd-rmq-admin-host --RMQAdminHostname=admin-rmq
+  rmq-admin-port: &cmd-rmq-admin-port --RMQAdminPort=5672
+  multihome: &cmd-multihome -MultiHome=$$POD_IP
+
 secrets:
   dune_postgres_password:
     file: ./config/secrets/dune-postgres-password
@@ -90,14 +97,43 @@ secrets:
   dune_server_commands_auth_token:
     file: ./config/secrets/dune-server-commands-token
   dune_server_login_password:
+    file: ./config/secrets/dune-server-login-password
   dune_rmq_http_token_auth_secret:
     file: ./config/secrets/dune-rmq-http-token-auth-secret
-    file: ./config/secrets/dune-server-login-password
-
-  rmq-admin-port: &cmd-rmq-admin-port --RMQAdminPort=5672
-  multihome: &cmd-multihome -MultiHome=$$POD_IP
 
 services:
+
+  docker-api-broker:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/python3"]
+    command: ["/workspace/scripts/docker_api_proxy.py"]
+    environment:
+      DUNE_DOCKER_API_PROXY_PROJECT: ${DUNE_RESTART_COMPOSE_PROJECT:-dune_server}
+      DUNE_DOCKER_API_PROXY_RESTORE_HOST_ROOT: ${DUNE_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-/nonexistent}}/backups/admin-panel
+      DUNE_DOCKER_API_PROXY_RESTORE_VISIBLE_ROOT: /restore-backups
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
+    network_mode: none
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    volumes:
+      - ./scripts/docker_api_proxy.py:/workspace/scripts/docker_api_proxy.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DUNE_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-.}}/backups/admin-panel:/restore-backups:ro
+      - dune-docker-api:/run/dune-docker-api
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/python3", "/workspace/scripts/docker_api_proxy.py", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
 
   postgres:
     image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
@@ -409,14 +445,16 @@ services:
       - *cmd-rmq-admin-host
       - *cmd-rmq-admin-port
       - *cmd-multihome
-      - -ini:game:[/Script/DuneSandbox.BuildingSettings]:m_BaseBackupToolTimeRestrictionInSeconds=0
       - -PartitionIndex=1
+    labels:
+      dune.map.database-name: Survival_1
     environment:
       <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.10
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
+      DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.survival.ini
     ports:
       - "7777:7777/udp"
       - "7888:7888/udp"
@@ -657,6 +695,8 @@ services:
 
   deep-desert:
     <<: *game-server-base
+    labels:
+      dune.map.partition-label: "01 Recommended PVE Casual"
     command:
       - *cmd-run
       - *cmd-farm-region
@@ -807,7 +847,7 @@ services:
       DUNE_RESTORE_DRILL_ENABLED: ${DUNE_RESTORE_DRILL_ENABLED:-true}
       DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED: ${DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED:-false}
       DUNE_RESTORE_DRILL_HOST_WORKSPACE: ${DUNE_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-}}
-      DUNE_RESTORE_DRILL_DOCKER_SOCKET: ${DUNE_RESTORE_DRILL_DOCKER_SOCKET:-/var/run/docker.sock}
+      DUNE_RESTORE_DRILL_DOCKER_SOCKET: /run/dune-docker-api/docker.sock
       DUNE_RESTORE_DRILL_IMAGE: ${DUNE_RESTORE_DRILL_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}
       DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS: ${DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS:-36}
       DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS: ${DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS:-900}
@@ -819,7 +859,7 @@ services:
       DUNE_RABBITMQ_RESTORE_DRILL_ENABLED: ${DUNE_RABBITMQ_RESTORE_DRILL_ENABLED:-true}
       DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED: ${DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED:-false}
       DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE: ${DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-}}
-      DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET: ${DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET:-/var/run/docker.sock}
+      DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET: /run/dune-docker-api/docker.sock
       DUNE_RABBITMQ_RESTORE_DRILL_IMAGE: ${DUNE_RABBITMQ_RESTORE_DRILL_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}}
       DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS: ${DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS:-36}
       DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS: ${DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS:-180}
@@ -992,9 +1032,10 @@ services:
       DISCORD_ADMIN_ROLE_IDS: ${DISCORD_ADMIN_ROLE_IDS:-}
       DISCORD_OWNER_ROLE_IDS: ${DISCORD_OWNER_ROLE_IDS:-}
       DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES: ${DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES:-134217728}
-      DUNE_ADMIN_SERVICE_CONTROL_ENABLED: ${DUNE_ADMIN_SERVICE_CONTROL_ENABLED:-false}
-      DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED: ${DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED:-false}
-      DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED: ${DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED:-false}
+      # Keep privileged host orchestration disabled until it uses a constrained host command API.
+      DUNE_ADMIN_SERVICE_CONTROL_ENABLED: "false"
+      DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED: "false"
+      DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED: "false"
       DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED: ${DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED:-false}
       DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED: ${DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED:-false}
       DUNE_ADMIN_FACTION_MUTATIONS_ENABLED: ${DUNE_ADMIN_FACTION_MUTATIONS_ENABLED:-false}
@@ -1084,14 +1125,15 @@ services:
       DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS: ${DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS:-5}
       COMPOSE_FILES: ${COMPOSE_FILES:-}
       DUNE_RESTART_COMPOSE_PROJECT: ${DUNE_RESTART_COMPOSE_PROJECT:-dune_server}
-      DUNE_RESTART_DOCKER_SOCKET: ${DUNE_RESTART_DOCKER_SOCKET:-/var/run/docker.sock}
+      DUNE_RESTART_API_SOCKET: /run/dune-restart-api.sock
+      DUNE_RESTART_DOCKER_SOCKET: /run/dune-docker-api/docker.sock
       DUNE_RESTART_HOST_WORKSPACE: ${DUNE_RESTART_HOST_WORKSPACE:-${DUNE_ANNOUNCE_HOST_WORKSPACE:-}}
       DUNE_RESTART_COMPOSE_IMAGE: ${DUNE_RESTART_COMPOSE_IMAGE:-docker:27.5.1-cli}
-      DUNE_RESTART_USE_HOST_COMPOSE: ${DUNE_RESTART_USE_HOST_COMPOSE:-true}
+      DUNE_RESTART_USE_HOST_COMPOSE: "false"
       DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS: ${DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS:-1800}
       DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS: ${DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS:-120}
       DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS: ${DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS:-30}
-      DUNE_RESTART_CHECK_STEAM_UPDATE: ${DUNE_RESTART_CHECK_STEAM_UPDATE:-true}
+      DUNE_RESTART_CHECK_STEAM_UPDATE: "false"
       DUNE_REBOOT_AFTER_STEAM_UPDATE: ${DUNE_REBOOT_AFTER_STEAM_UPDATE:-false}
       DUNE_UPDATE_REBOOT_HOST: ${DUNE_UPDATE_REBOOT_HOST:-kspls0}
       DUNE_RESTART_STEAM_UPDATE_MODE: ${DUNE_RESTART_STEAM_UPDATE_MODE:-auto}
@@ -1154,6 +1196,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      docker-api-broker:
+        condition: service_healthy
     volumes:
       - *rg-bin-volume
       - *busybox-bin-volume
@@ -1167,7 +1211,9 @@ services:
       - ./.env:/workspace/.env
       - ./backups:/workspace/backups
       - ./data:/workspace/data:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/null:/var/run/docker.sock:ro
+      - /run/dune-restart-api/restart.sock:/run/dune-restart-api.sock:ro
+      - dune-docker-api:/run/dune-docker-api:ro
     networks:
       default:
         ipv4_address: 172.31.240.9
@@ -1217,13 +1263,61 @@ services:
   admin-chat-commands:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
     network_mode: host
     working_dir: /workspace
     environment:
+      PYTHONDONTWRITEBYTECODE: "1"
       DUNE_ADMIN_DB_HOST: ${DUNE_ADMIN_DB_HOST:-127.0.0.1}
       DUNE_ADMIN_DB_PORT: ${DUNE_ADMIN_DB_PORT:-15431}
       DUNE_ADMIN_DB_USER: dune
       DUNE_ADMIN_DB_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
+      DUNE_ADMIN_TOKEN: ${DUNE_ADMIN_TOKEN:-}
+      DUNE_ADMIN_HOST_PORT: ${DUNE_ADMIN_HOST_PORT:-18080}
+      DUNE_ADMIN_DB_NAME: ${DUNE_ADMIN_DB_NAME:-${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}}
+      DUNE_GAME_DB_NAME: ${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}
+      DUNE_DATABASE: ${DUNE_DATABASE:-}
+      DUNE_DB_NAME: ${DUNE_DB_NAME:-}
+      DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD: ${DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD:-m_TimeStamp}
+      DUNE_ANNOUNCE_ENV_FILE: /dev/null
+      DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS: ${DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS:-}
+      DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS: ${DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS:-}
+      DUNE_CHAT_COMMAND_AUCTION_ACCESS_POINT_ID: ${DUNE_CHAT_COMMAND_AUCTION_ACCESS_POINT_ID:-}
+      DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED: ${DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED:-}
+      DUNE_CHAT_COMMAND_AUCTION_CATEGORY_DEPTH: ${DUNE_CHAT_COMMAND_AUCTION_CATEGORY_DEPTH:-}
+      DUNE_CHAT_COMMAND_AUCTION_CATEGORY_MASK: ${DUNE_CHAT_COMMAND_AUCTION_CATEGORY_MASK:-}
+      DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS: ${DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS:-}
+      DUNE_CHAT_COMMAND_AUCTION_DURATION_SECONDS: ${DUNE_CHAT_COMMAND_AUCTION_DURATION_SECONDS:-}
+      DUNE_CHAT_COMMAND_AUCTION_ENABLED: ${DUNE_CHAT_COMMAND_AUCTION_ENABLED:-}
+      DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID: ${DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID:-}
+      DUNE_CHAT_COMMAND_AUCTION_LISTING_FEE: ${DUNE_CHAT_COMMAND_AUCTION_LISTING_FEE:-}
+      DUNE_CHAT_COMMAND_AUCTION_MAX_ORDERS_PER_PLAYER: ${DUNE_CHAT_COMMAND_AUCTION_MAX_ORDERS_PER_PLAYER:-}
+      DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE: ${DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE:-}
+      DUNE_CHAT_COMMAND_DD1_BASE_CONTAINMENT_PADDING: ${DUNE_CHAT_COMMAND_DD1_BASE_CONTAINMENT_PADDING:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_BACKUP_ENABLED: ${DUNE_CHAT_COMMAND_DD1_BRT_BACKUP_ENABLED:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_FLS_IDS: ${DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_FLS_IDS:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS: ${DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED: ${DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_DRY_RUN: ${DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_DRY_RUN:-}
+      DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED: ${DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED:-}
+      DUNE_CHAT_COMMAND_DD1_MAP_NAMES: ${DUNE_CHAT_COMMAND_DD1_MAP_NAMES:-}
+      DUNE_CHAT_COMMAND_DD1_PARTITION_ID: ${DUNE_CHAT_COMMAND_DD1_PARTITION_ID:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_MAX_DISTANCE: ${DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_MAX_DISTANCE:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_SECONDS: ${DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_SECONDS:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_MAX_DD_CONNECTED_PLAYERS: ${DUNE_CHAT_COMMAND_DD1_RESTORE_MAX_DD_CONNECTED_PLAYERS:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X: ${DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Y: ${DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Y:-}
+      DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Z: ${DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Z:-}
+      DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED: ${DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED:-}
+      DUNE_CHAT_COMMAND_TARGET_REPLY_CHANNEL: ${DUNE_CHAT_COMMAND_TARGET_REPLY_CHANNEL:-}
+      DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE: ${DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE:-}
+      DUNE_CHAT_COMMAND_TARGET_REPLY_ROUTING_KEY: ${DUNE_CHAT_COMMAND_TARGET_REPLY_ROUTING_KEY:-}
       DUNE_CHAT_COMMAND_PREFIX: ${DUNE_CHAT_COMMAND_PREFIX:-&}
       DUNE_CHAT_COMMAND_ADMINS: ${DUNE_CHAT_COMMAND_ADMINS:-AdminUser}
       DUNE_CHAT_COMMAND_ADMIN_FLS_IDS: ${DUNE_CHAT_COMMAND_ADMIN_FLS_IDS:-TEST_FLS_ID}
@@ -1256,9 +1350,9 @@ services:
       DUNE_CHAT_COMMAND_AMQP_HOST: ${DUNE_CHAT_COMMAND_AMQP_HOST:-127.0.0.1}
       DUNE_CHAT_COMMAND_AMQP_PORT: ${DUNE_CHAT_COMMAND_AMQP_PORT:-31982}
       DUNE_CHAT_COMMAND_AMQP_TLS: ${DUNE_CHAT_COMMAND_AMQP_TLS:-true}
-      DUNE_CHAT_COMMAND_AMQP_USER: ${DUNE_CHAT_COMMAND_AMQP_USER:-guest}
-      DUNE_CHAT_COMMAND_AMQP_PASSWORD: ${DUNE_CHAT_COMMAND_AMQP_PASSWORD:-guest}
-      DUNE_CHAT_COMMAND_REPLY_COMMAND: ${DUNE_CHAT_COMMAND_REPLY_COMMAND:-/workspace/scripts/announce.sh}
+      DUNE_CHAT_COMMAND_AMQP_USER: ${DUNE_CHAT_COMMAND_AMQP_USER:-${DUNE_ANNOUNCE_CHAT_USER:-}}
+      DUNE_CHAT_COMMAND_AMQP_PASSWORD: ${DUNE_CHAT_COMMAND_AMQP_PASSWORD:-${DUNE_ANNOUNCE_CHAT_PASSWORD:-}}
+      DUNE_CHAT_COMMAND_REPLY_COMMAND: /workspace/scripts/announce_pika.py
       DUNE_CHAT_COMMAND_REPLY_TIMEOUT_SECONDS: ${DUNE_CHAT_COMMAND_REPLY_TIMEOUT_SECONDS:-10}
       DUNE_CHAT_COMMAND_TARGET_REPLY_MODE: ${DUNE_CHAT_COMMAND_TARGET_REPLY_MODE:-whisper}
       DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE: ${DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE:-chat.whispers}
@@ -1303,7 +1397,9 @@ services:
       DUNE_ANNOUNCE_RMQ_USER: ${DUNE_ANNOUNCE_RMQ_USER:-bgd.${WORLD_UNIQUE_NAME}.duneadmin.admin}
       DUNE_ANNOUNCE_RMQ_PASSWORD: ${DUNE_ANNOUNCE_RMQ_PASSWORD:-guest}
       DUNE_RESTART_COMPOSE_PROJECT: ${DUNE_RESTART_COMPOSE_PROJECT:-dune_server}
-      DUNE_RESTART_DOCKER_SOCKET: ${DUNE_RESTART_DOCKER_SOCKET:-/var/run/docker.sock}
+      DUNE_RESTART_DOCKER_SOCKET: /run/dune-docker-api/docker.sock
+      DUNE_RESTART_USE_HOST_COMPOSE: "false"
+      DUNE_RESTART_CHECK_STEAM_UPDATE: "false"
     command:
       - /workspace/scripts/admin-chat-commands.py
     healthcheck:
@@ -1325,9 +1421,12 @@ services:
       - *jq-bin-volume
       - *curl-bin-volume
       - ./scripts:/workspace/scripts:ro
-      - ./.env:/workspace/.env:ro
       - ./backups:/workspace/backups
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/null:/var/run/docker.sock:ro
+      - dune-docker-api:/run/dune-docker-api:ro
+
+volumes:
+  dune-docker-api:
 
 networks:
   default:

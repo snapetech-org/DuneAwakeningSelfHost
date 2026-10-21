@@ -4,14 +4,11 @@ services:
     command:
       - /workspace/scripts/run_server_safe.sh
       - -FarmRegion=${WORLD_REGION}
-      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
       - -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
       - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
-      - -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
       - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
       - -RMQGameTlsEnabled=true
       - -ExternalAddress=${EXTERNAL_ADDRESS}
       - --RMQGameHostname=game-rmq
@@ -25,17 +22,23 @@ services:
       - -PartitionIndex=8
     environment:
       POD_IP: 172.31.241.18
+      DUNE_RUNTIME_SECRETS_REQUIRED: "true"
       NODE_NAME: dune-handoff-lab
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
-      DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
       DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
       DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
+      DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.ini
       DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
       DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
       DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
       DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_MODE: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_MODE:-dd-totem-groups}
       DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
+    secrets:
+      - dune_postgres_password
+      - dune_fls_token
+      - dune_server_commands_auth_token
+      - dune_server_login_password
     ports:
       - "${HANDOFF_LAB_DD_PVE_UDP_PORT:-17784}:7784/udp"
       - "${HANDOFF_LAB_DD_PVE_IGW_UDP_PORT:-18895}:7895/udp"
@@ -55,14 +58,11 @@ services:
     command:
       - /workspace/scripts/run_server_safe.sh
       - -FarmRegion=${WORLD_REGION}
-      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
       - -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
       - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
-      - -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
       - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
       - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
       - -RMQGameTlsEnabled=true
       - -ExternalAddress=${EXTERNAL_ADDRESS}
       - --RMQGameHostname=game-rmq
@@ -76,18 +76,24 @@ services:
       - -PartitionIndex=31
     environment:
       POD_IP: 172.31.241.31
+      DUNE_RUNTIME_SECRETS_REQUIRED: "true"
       NODE_NAME: dune-handoff-lab
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
-      DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
       DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
       DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
       DUNE_USERENGINE_CONFIG_PATH: /workspace/config/UserEngine.deep-desert-pvp.ini
+      DUNE_SERVER_CUSTOM_SETTINGS_PATH: /workspace/config/UserServerCustomSettings.deep-desert-pvp.ini
       DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
       DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
       DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
       DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_MODE: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_MODE:-dd-totem-groups}
       DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
+    secrets:
+      - dune_postgres_password
+      - dune_fls_token
+      - dune_server_commands_auth_token
+      - dune_server_login_password
     ports:
       - "${HANDOFF_LAB_DD_PVP_UDP_PORT:-17807}:7807/udp"
       - "${HANDOFF_LAB_DD_PVP_IGW_UDP_PORT:-18918}:7918/udp"

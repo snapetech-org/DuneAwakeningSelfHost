@@ -45,9 +45,8 @@ class Dd1BrtEmulatorContractTests(unittest.TestCase):
 
     def test_brt_tooling_regressions_are_in_standard_validation(self):
         source = MAKEFILE.read_text(encoding="utf-8")
-        # `validate:` is declared on several lines; Make merges their prerequisites.
-        validate_lines = " ".join(line for line in source.splitlines() if line.startswith("validate:"))
-        self.assertIn("test-brt-dd-tooling", validate_lines)
+        validate_line = next(line for line in source.splitlines() if line.startswith("validate:"))
+        self.assertIn("test-brt-dd-tooling", validate_line)
         self.assertIn("scripts/test-dd1-brt-emulator.py", source)
         self.assertIn("scripts/test-brt-dd-trace.py", source)
 

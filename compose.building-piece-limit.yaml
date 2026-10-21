@@ -1,9 +1,11 @@
 x-building-piece-limit-patch: &building-piece-limit-patch
   environment:
+    # Explicit legacy mode: this overlay is retained for older image builds.
+    DUNE_BUILDING_PIECE_LIMIT_MODE: "pak"
     DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
     DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-10000}
     DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: "true"
-    DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-all}
+    DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
     DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
     DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so
   volumes:
