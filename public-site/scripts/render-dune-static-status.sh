@@ -414,7 +414,7 @@ elif maintenance:
     else:
         maintenance_heading = "Last maintenance attempt" if status == "failed" else "Last maintenance"
         runtime_label = "Maintenance failed" if status == "failed" else "Since maintenance"
-    runtime_text = fmt(age)
+    runtime_text = f"{fmt(age)} ago"
     if (status in ("failed", "completed_with_warnings") and not recovered_after_readiness_timeout) or age > 36 * 3600:
         runtime_class = "status-warn"
     detail = (
