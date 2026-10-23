@@ -215,7 +215,7 @@ class StaticStatusRenderTest(unittest.TestCase):
             self.assertEqual(process.returncode, 0, stderr)
             self.assertIn("<dd>Online</dd>", live_index.read_text(encoding="utf-8"))
 
-    def test_elapsed_time_uses_completed_maintenance_job(self):
+    def test_elapsed_time_uses_runtime_core_container_starts(self):
         executed_at = time.time() - 3600
         html = self.render_status({
             "jobs": [{
@@ -232,8 +232,8 @@ class StaticStatusRenderTest(unittest.TestCase):
 
         self.assertIn("Since maintenance", html)
         self.assertIn("<strong>Last maintenance</strong>", html)
-        self.assertIn("<strong>Backup</strong> requested", html)
         self.assertIn("Most recent container restart", html)
+        self.assertNotIn("Last maintenance attempt", html)
 
     def test_sleeping_dynamic_maps_do_not_degrade_public_status(self):
         html = self.render_status({"jobs": []})
@@ -281,7 +281,7 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("<strong>Map policy</strong> destinations start on demand", html)
         self.assertNotIn("<strong>Running maps</strong>", html)
 
-    def test_elapsed_time_uses_failed_maintenance_attempt(self):
+    def test_failed_job_timestamp_does_not_override_runtime_maintenance_age(self):
         executed_at = time.time() - 7200
         html = self.render_status({
             "jobs": [{
@@ -296,13 +296,13 @@ class StaticStatusRenderTest(unittest.TestCase):
             }]
         })
 
-        self.assertIn("Maintenance failed", html)
-        self.assertNotIn("Since maintenance", html)
-        self.assertIn("<strong>Last maintenance attempt</strong>", html)
-        self.assertIn("<strong>Status</strong> failed", html)
-        self.assertIn("<strong>Backup</strong> requested", html)
+        self.assertIn("Since maintenance", html)
+        self.assertNotIn("Maintenance failed", html)
+        self.assertIn("<strong>Last maintenance</strong>", html)
+        self.assertNotIn("<strong>Status</strong> failed", html)
+        self.assertNotIn("Last maintenance attempt", html)
 
-    def test_failed_readiness_timeout_is_cleared_after_farm_recovers(self):
+    def test_failed_maintenance_result_does_not_override_runtime_age(self):
         html = self.render_status(
             {
                 "jobs": [{
@@ -326,8 +326,8 @@ class StaticStatusRenderTest(unittest.TestCase):
 
         self.assertIn("Since maintenance", html)
         self.assertNotIn("Maintenance failed", html)
-        self.assertIn("recovered after readiness timeout", html)
-        self.assertIn("Farm reached ready/active after the maintenance readiness timeout.", html)
+        self.assertIn("<strong>Last maintenance</strong>", html)
+        self.assertNotIn("Farm reached ready/active after the maintenance readiness timeout.", html)
 
     def test_upcoming_maintenance_is_visible_before_stale_failure(self):
         html = self.render_status({
@@ -358,8 +358,8 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("Maintenance scheduled", html)
         self.assertIn("<strong>Next maintenance</strong>", html)
         self.assertIn("<strong>Backup</strong> requested before restart", html)
-        self.assertIn("<strong>Last maintenance attempt</strong>", html)
-        self.assertIn("<strong>Last result</strong> failed", html)
+        self.assertIn("<strong>Last maintenance</strong>", html)
+        self.assertNotIn("<strong>Last result</strong> failed", html)
         self.assertNotIn("<strong>Schedule</strong> stale", html)
 
     def test_overdue_maintenance_is_visible_instead_of_old_failure(self):
@@ -393,9 +393,9 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("<strong>Scheduled maintenance</strong>", html)
         self.assertIn("<strong>Status</strong> scheduled", html)
         self.assertNotIn("Maintenance failed", html)
-        self.assertIn("<strong>Last maintenance attempt</strong>", html)
+        self.assertIn("<strong>Last maintenance</strong>", html)
 
-    def test_stale_maintenance_marks_schedule_stale(self):
+    def test_stale_job_timestamp_does_not_mark_runtime_maintenance_stale(self):
         executed_at = time.time() - (48 * 3600)
         html = self.render_status({
             "jobs": [{
@@ -411,14 +411,13 @@ class StaticStatusRenderTest(unittest.TestCase):
         })
 
         self.assertIn("Since maintenance", html)
-        self.assertIn("<strong>Schedule</strong> stale", html)
-        self.assertIn("status-dot status-warn", html)
+        self.assertNotIn("<strong>Schedule</strong> stale", html)
 
-    def test_missing_maintenance_job_falls_back_to_restart_label(self):
+    def test_missing_maintenance_job_still_uses_runtime_core_starts(self):
         html = self.render_status({"jobs": []})
 
-        self.assertIn("Since restart", html)
-        self.assertIn("<strong>Most recent restart</strong>", html)
+        self.assertIn("Since maintenance", html)
+        self.assertIn("<strong>Last maintenance</strong>", html)
 
     def test_render_includes_support_links(self):
         html = self.render_status({"jobs": []})

@@ -35,6 +35,13 @@ or warming are shown as `On demand` or `Warming`; they do not make the server
 degraded. `Player access` also requires healthy FLS publication and enough game
 RabbitMQ connections for the required core.
 
+The public `Since maintenance` age is derived from Docker start times for the
+six always-on maps, using the oldest current core-map start as the conservative
+marker for the last full maintenance restart. Completed or failed restart-job
+timestamps do not set this age; a failed preflight can be recorded without
+restarting any map. Active scheduled or in-progress maintenance is still shown
+from the restart-job state.
+
 The FLS publication probe reads a bounded recent log tail (default `2000` lines,
 controlled by `DUNE_FLS_PUBLICATION_HEALTH_LOG_TAIL`) so high-volume Director
 logs cannot make the one-minute status renderer time out. A probe timeout is

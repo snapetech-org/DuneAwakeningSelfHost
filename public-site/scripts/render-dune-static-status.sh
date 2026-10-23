@@ -140,7 +140,6 @@ runtime_text="Unknown"
 runtime_label="Since maintenance"
 runtime_detail_html="Runtime data unavailable."
 status_detail_text="Live status is being checked."
-runtime_farm_ready=false
 
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh --public-summary) >"$tmp_status" 2>&1; then
   health_line="$(sed -nE 's/^current_ready_alive=([0-9]+) current_alive_active=([0-9]+) active_servers=([0-9]+) partitions=([0-9]+) game_sg_connections=([0-9]+) admin_sg_connections=([0-9]+).*/\1 \2 \3 \4 \5 \6/p' "$tmp_status" | tail -1)"
@@ -191,18 +190,6 @@ if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS
     status_detail_text="Required core services are recovering. Retry in a few minutes."
   fi
 fi
-runtime_ready_count="${current_ready_alive:-0}"
-runtime_alive_count="${current_alive_active:-0}"
-runtime_active_count="${active_servers:-0}"
-runtime_partition_count="${partitions:-0}"
-if [[ "$runtime_ready_count" =~ ^[0-9]+$ && "$runtime_alive_count" =~ ^[0-9]+$ \
-    && "$runtime_active_count" =~ ^[0-9]+$ && "$runtime_partition_count" =~ ^[0-9]+$ \
-    && "$runtime_partition_count" -gt 0 && "$runtime_ready_count" -eq "$runtime_partition_count" \
-    && "$runtime_alive_count" -eq "$runtime_partition_count" && "$runtime_active_count" -eq "$runtime_partition_count" ]]; then
-  runtime_farm_ready=true
-fi
-export DUNE_PUBLIC_FARM_READY="$runtime_farm_ready"
-
 runtime_eval="$(
   python3 - <<'PY'
 import datetime
@@ -224,6 +211,7 @@ services = {
     "overland-s-06", "bandit-fortress", "overland-s-07", "overland-s-08",
     "dungeon-thepit",
 }
+core_services = {"survival", "overmap", "deep-desert", "deep-desert-pvp", "arrakeen", "harko-village"}
 project = os.environ.get("COMPOSE_PROJECT_NAME", os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server"))
 dune_root = os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost")
 restart_state_file = os.environ.get(
@@ -266,29 +254,23 @@ def parse_epoch(value):
         return None
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
 
-def maintenance_restart_state():
+def scheduled_maintenance_state():
     try:
         with open(restart_state_file, encoding="utf-8") as handle:
             state = json.load(handle)
     except (OSError, json.JSONDecodeError):
-        return None, None
-    completed = []
+        return None
     active = []
     for job in state.get("jobs", []):
         status = job.get("status")
         if job.get("action") != "restart" or not job.get("execute"):
             continue
-        if status in ("executed", "failed", "completed_with_warnings"):
-            executed = parse_epoch(job.get("executedAt"))
-            if executed:
-                completed.append((executed, job))
-        elif status in ("scheduled", "executing", "awaiting_reboot"):
+        if status in ("scheduled", "executing", "awaiting_reboot"):
             run_at = parse_epoch(job.get("runAt"))
             if run_at:
                 active.append((run_at, job))
-    latest = max(completed, key=lambda item: item[0]) if completed else None
     upcoming = min(active, key=lambda item: item[0]) if active else None
-    return latest, upcoming
+    return upcoming
 
 try:
     ps = subprocess.check_output(
@@ -307,7 +289,6 @@ except Exception:
     sys.exit(0)
 
 now = datetime.datetime.now(datetime.timezone.utc)
-farm_ready = os.environ.get("DUNE_PUBLIC_FARM_READY", "false").lower() == "true"
 rows = []
 restart_count = 0
 for line in ps.splitlines():
@@ -334,14 +315,30 @@ newest = max(started for _, started in rows)
 oldest = min(started for _, started in rows)
 last_restart = int((now - newest).total_seconds())
 oldest_uptime = int((now - oldest).total_seconds())
-maintenance, scheduled_maintenance = maintenance_restart_state()
-runtime_label = "Since restart"
-runtime_text = fmt(last_restart)
-runtime_class = "status-ok"
+scheduled_maintenance = scheduled_maintenance_state()
+core_started = [started for service, started in rows if service in core_services]
+if core_started:
+    # The oldest always-on map start is the conservative runtime marker for
+    # the last full maintenance cycle; job result timestamps include preflight failures.
+    last_maintenance = min(core_started)
+    runtime_age = int((now - last_maintenance).total_seconds())
+    runtime_label = "Since maintenance"
+else:
+    last_maintenance = None
+    runtime_age = last_restart
+    runtime_label = "Since restart"
+runtime_text = f"{fmt(runtime_age)} ago"
+runtime_class = "status-warn" if runtime_age > 36 * 3600 else "status-ok"
+event_detail = (
+    f"<strong>Last maintenance</strong> {html.escape(last_maintenance.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+    if last_maintenance else
+    f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+)
 detail = (
     f"<strong>Warm maps</strong> {len(rows)}<br>"
     f"<strong>Map policy</strong> destinations start on demand<br>"
-    f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+    f"{event_detail}"
+    f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
     f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}<br>"
     f"<strong>Container restarts</strong> {restart_count}"
 )
@@ -378,57 +375,8 @@ if scheduled_maintenance:
         f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
         f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}"
     )
-    if maintenance:
-        executed, previous_job = maintenance
-        previous_status = str(previous_job.get("status") or "unknown")
-        previous_status_label = {
-            "executed": "completed",
-            "failed": "failed",
-            "completed_with_warnings": "completed with warnings",
-        }.get(previous_status, previous_status)
-        detail += (
-            f"<br><strong>Last maintenance attempt</strong> {html.escape(executed.strftime('%Y-%m-%d %H:%M UTC'))}"
-            f"<br><strong>Last result</strong> {html.escape(previous_status_label)}"
-        )
-elif maintenance:
-    executed, job = maintenance
-    age = int((now - executed).total_seconds())
-    backup_state = "requested" if job.get("backup") else "not requested"
-    status = str(job.get("status") or "unknown")
-    execution_restart_gap = abs((executed - newest).total_seconds())
-    recovered_after_readiness_timeout = (
-        status == "failed"
-        and farm_ready
-        and execution_restart_gap <= 30 * 60
-    )
-    status_label = {
-        "executed": "completed",
-        "failed": "failed",
-        "completed_with_warnings": "completed with warnings",
-    }.get(status, status)
-    if recovered_after_readiness_timeout:
-        maintenance_heading = "Last maintenance"
-        status_label = "recovered after readiness timeout"
-        runtime_label = "Since maintenance"
-        runtime_class = "status-ok"
-    else:
-        maintenance_heading = "Last maintenance attempt" if status == "failed" else "Last maintenance"
-        runtime_label = "Maintenance failed" if status == "failed" else "Since maintenance"
-    runtime_text = f"{fmt(age)} ago"
-    if (status in ("failed", "completed_with_warnings") and not recovered_after_readiness_timeout) or age > 36 * 3600:
-        runtime_class = "status-warn"
-    detail = (
-        f"<strong>{maintenance_heading}</strong> {html.escape(executed.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-        f"<strong>Status</strong> {html.escape(status_label)}<br>"
-        f"<strong>Target</strong> {html.escape(str(job.get('targetLabel') or job.get('target') or 'restart'))}<br>"
-        f"<strong>Backup</strong> {html.escape(backup_state)}<br>"
-        f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-        f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}"
-    )
-    if recovered_after_readiness_timeout:
-        detail += "<br><strong>Recovery</strong> Farm reached ready/active after the maintenance readiness timeout."
-    if age > 36 * 3600:
-        detail += "<br><strong>Schedule</strong> stale"
+if runtime_age > 36 * 3600:
+    detail += "<br><strong>Schedule</strong> stale"
 values = {
     "runtime_class": runtime_class,
     "runtime_label": runtime_label,
