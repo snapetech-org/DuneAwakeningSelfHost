@@ -82,10 +82,10 @@ request without reissuing a federated session.
 DUNE_ADMIN_FEDERATED_AUTH_ENABLED=true
 DUNE_ADMIN_AUTH_PROVIDER=oidc
 DUNE_ADMIN_AUTH_CLIENT_ID=<registered-client-id>
-DUNE_ADMIN_AUTH_CLIENT_SECRET_FILE=/workspace/config/secrets/admin-oauth-client.secret
+DUNE_ADMIN_AUTH_CLIENT_SECRET_FILE=/workspace-secret-files/admin-oauth-client.secret
 DUNE_ADMIN_AUTH_REDIRECT_URI=https://admin.example.test/auth/callback
 DUNE_ADMIN_AUTH_SUBJECTS_FILE=/workspace/config/admin-auth-subjects.json
-DUNE_ADMIN_AUTH_SESSION_SECRET_FILE=/workspace/config/secrets/admin-session.secret
+DUNE_ADMIN_AUTH_SESSION_SECRET_FILE=/workspace-secret-files/admin-session.secret
 DUNE_ADMIN_AUTH_SESSION_SECONDS=28800
 DUNE_ADMIN_AUTH_COOKIE_SECURE=true
 ```

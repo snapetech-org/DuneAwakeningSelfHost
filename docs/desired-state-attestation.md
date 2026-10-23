@@ -156,7 +156,7 @@ Attestation reports divergence; it deliberately does not auto-revert a host.
 | `DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED` | `false` | Enables reviewed seal/acknowledgement actions. |
 | `DUNE_DESIRED_STATE_POLICY` | `/workspace/config/desired-state.json` | Container policy path. |
 | `DUNE_DESIRED_STATE_DATABASE` | `/workspace/backups/desired-state/desired-state.sqlite3` | Private ledger path. |
-| `DUNE_DESIRED_STATE_HMAC_SECRET_FILE` | `/workspace/config/secrets/desired-state-hmac.secret` | Private signing key. |
+| `DUNE_DESIRED_STATE_HMAC_SECRET_FILE` | `/workspace-secret-files/desired-state-hmac.secret` | Private signing key mounted from the protected host secret directory. |
 | `DUNE_DESIRED_STATE_POLL_SECONDS` | `60` | Worker cadence, constrained to 15–3600 seconds. |
 
 Host CLI paths can be overridden with `DUNE_DESIRED_STATE_HOST_DATABASE`,

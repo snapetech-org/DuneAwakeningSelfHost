@@ -165,7 +165,7 @@ Configuration defaults are:
 ```env
 DUNE_FEATURE_READINESS_HISTORY_ENABLED=true
 DUNE_FEATURE_READINESS_HISTORY_DATABASE=/workspace/backups/feature-readiness/history.sqlite3
-DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE=/workspace/config/secrets/feature-readiness-history-hmac.secret
+DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE=/workspace-secret-files/feature-readiness-history-hmac.secret
 ```
 
 The parity activator generates the 32-byte secret with mode `0600`. The store

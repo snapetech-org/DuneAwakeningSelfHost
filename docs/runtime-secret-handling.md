@@ -51,6 +51,13 @@ workspace mount, so game processes cannot read those host files through
 `/workspace`. Keep the external directory private and do not replace these
 links with regular files.
 
+The Admin Panel mounts that protected directory separately at
+`/workspace-secret-files`. Admin settings for files stored under
+`config/secrets/` must use this container path; Docker secrets such as the
+admin token remain under `/run/secrets`. Paths through
+`/workspace/config/secrets` resolve outside the container mount and are
+unavailable to the panel.
+
 Postgres uses `POSTGRES_PASSWORD_FILE` with the read-only
 `dune_postgres_password` secret. The optional streaming replica uses
 `POSTGRES_REPLICATION_PASSWORD_FILE`; its entrypoint reads the file, creates a

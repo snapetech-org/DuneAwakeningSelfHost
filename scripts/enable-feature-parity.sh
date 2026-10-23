@@ -176,11 +176,11 @@ set_value DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS 24
 set_value DUNE_MAINTENANCE_PLANNER_POLICY /workspace/config/maintenance-planner.json
 set_value DUNE_DESIRED_STATE_POLICY /workspace/config/desired-state.json
 set_value DUNE_DESIRED_STATE_DATABASE /workspace/backups/desired-state/desired-state.sqlite3
-set_value DUNE_DESIRED_STATE_HMAC_SECRET_FILE /workspace/config/secrets/desired-state-hmac.secret
+set_value DUNE_DESIRED_STATE_HMAC_SECRET_FILE /workspace-secret-files/desired-state-hmac.secret
 set_value DUNE_DESIRED_STATE_POLL_SECONDS 60
 set_value DUNE_CHANGE_INTELLIGENCE_POLICY /workspace/config/change-intelligence.json
 set_value DUNE_CHANGE_INTELLIGENCE_DATABASE /workspace/backups/change-intelligence/change-intelligence.sqlite3
-set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/change-intelligence-hmac.secret
+set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace-secret-files/change-intelligence-hmac.secret
 set_value DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR /workspace/backups/operator-evidence
 set_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR backups/operator-evidence
 set_value DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS 10
@@ -192,9 +192,9 @@ set_value DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS 15
 set_value DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS 5
 set_value DUNE_OPERATIONS_BRIEFING_RETENTION 100
 set_value DUNE_FEATURE_READINESS_HISTORY_DATABASE /workspace/backups/feature-readiness/history.sqlite3
-set_value DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE /workspace/config/secrets/feature-readiness-history-hmac.secret
+set_value DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE /workspace-secret-files/feature-readiness-history-hmac.secret
 set_value DUNE_CREDENTIAL_LIFECYCLE_DATABASE /workspace/backups/credential-lifecycle/history.sqlite3
-set_value DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE /workspace/config/secrets/credential-lifecycle-hmac.secret
+set_value DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE /workspace-secret-files/credential-lifecycle-hmac.secret
 set_value DUNE_CREDENTIAL_LIFECYCLE_ANCHOR_FILE /workspace/backups/credential-lifecycle/history.anchor.json
 set_value DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR /workspace/backups/deployment-assurance
 set_value DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE /source-workspace

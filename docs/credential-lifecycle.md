@@ -233,7 +233,7 @@ key with mode `0600` and configures:
 
 ```text
 DUNE_CREDENTIAL_LIFECYCLE_DATABASE=/workspace/backups/credential-lifecycle/history.sqlite3
-DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE=/workspace/config/secrets/credential-lifecycle-hmac.secret
+DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE=/workspace-secret-files/credential-lifecycle-hmac.secret
 ```
 
 The first refresh establishes baselines. Create a new full backup afterward so

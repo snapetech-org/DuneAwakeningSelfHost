@@ -230,7 +230,7 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_ENABLED` | `true` | Enables history import and direct future ingestion. |
 | `DUNE_CHANGE_INTELLIGENCE_POLICY` | `/workspace/config/change-intelligence.json` | Classification, impact, correlation, and bounds. |
 | `DUNE_CHANGE_INTELLIGENCE_DATABASE` | `/workspace/backups/change-intelligence/change-intelligence.sqlite3` | Private append-only ledger. |
-| `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
+| `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace-secret-files/change-intelligence-hmac.secret` | Private authentication key mounted from the protected host secret directory. |
 | `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed incident and deployment evidence. |
 | `DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS` | `60` | Single-flight public-status reuse window preventing concurrent API/readiness/metrics scans from rebuilding incident correlation views. Valid range is 1–300 seconds. |
 | `DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES` | `67108864` | Maximum rotated/current audit JSONL bytes read during startup catch-up; bounded to 1 MiB–512 MiB. |
