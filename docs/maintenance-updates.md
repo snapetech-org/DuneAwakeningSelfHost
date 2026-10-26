@@ -17,6 +17,10 @@ operator certifies and applies the candidate in Infrastructure. The legacy
 fully automatic behavior requires the explicit
 `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=true` opt-out.
 
+The hotfix service is bounded to 90 minutes per run. Its timer waits 15 minutes
+after the service exits before polling again, so a slow or failed update does
+not cause overlapping work or an immediate retry when a long run finishes.
+
 Daily maintenance uses the same trust boundary. The default `certified` policy
 checks readiness before warning players and revalidates the exact staged
 candidate immediately before any disconnect or stop. When no update is staged,

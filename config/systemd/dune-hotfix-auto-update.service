@@ -15,4 +15,4 @@ Environment=DOCKER_CONFIG=/home/keith/.docker
 Environment=DUNE_HOTFIX_UPDATE_LOCK_FILE=/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/hotfix-auto-update-and-restart.sh /opt/DuneAwakeningSelfHost/.env
-TimeoutStartSec=45min
+TimeoutStartSec=90min

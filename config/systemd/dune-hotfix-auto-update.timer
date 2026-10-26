@@ -3,9 +3,8 @@ Description=Poll Dune owned Steam package for hotfixes
 
 [Timer]
 OnBootSec=10min
-OnUnitActiveSec=15min
+OnUnitInactiveSec=15min
 AccuracySec=2min
-Persistent=true
 Unit=dune-hotfix-auto-update.service
 
 [Install]
