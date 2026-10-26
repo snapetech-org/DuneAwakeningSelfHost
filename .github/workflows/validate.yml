@@ -1,3 +1,4 @@
+# ng-runner-policy: private-jit-only-v1
 name: Validate
 
 on:
@@ -11,7 +12,7 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-duneawakeningselfhost","ng-main-run-{0}","gha-{0}-validate"]}}', github.run_id)) }}
     steps:
       - uses: actions/checkout@v4
 
