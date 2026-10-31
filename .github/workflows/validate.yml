@@ -1,6 +1,12 @@
 # ng-runner-policy: private-jit-only-v1
 name: Validate
 
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/') &&
+      format('action:{0}:pool:{1}:tag:{2}', inputs.action || 'ci', inputs.runner_pool || 'private', github.ref_name) ||
+      github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action || 'ci', inputs.runner_pool || 'private') || format('action:ci:pool:private') }}
 on:
   pull_request:
     types: [labeled]
