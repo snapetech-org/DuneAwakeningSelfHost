@@ -3,7 +3,7 @@ name: Validate
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number != '' &&
       format('owner-pr:{0}:{1}:{2}:action:{3}:pool:{4}', inputs.pr_number, inputs.pr_sha, inputs.target_run_id, inputs.action_tag, inputs.runner_pool_tag) ||
-      format('action:{0}:pool:{1}', inputs.action || inputs.action_tag || 'ci', inputs.runner_pool || inputs.runner_pool_tag || 'private') }}
+      format('action:{0}:pool:{1}', inputs.action_tag || 'ci', inputs.runner_pool_tag || 'private') }}
 
 on:
   pull_request_target:
@@ -13,34 +13,16 @@ on:
     - main
   workflow_dispatch:
     inputs:
-      action:
-        description: Required workflow action
-        type: choice
-        options:
-        - ci
-        required: false
-        default: ci
-      runner_pool:
-        description: Required private JIT runner pool
-        type: choice
-        options:
-        - private
-        required: false
-        default: private
       action_tag:
-        description: Workflow action tag used by the private owner-PR dispatcher
+        description: Required workflow action tag
         type: choice
-        options:
-        - ci
-        required: false
-        default: ci
+        options: [ci]
+        required: true
       runner_pool_tag:
-        description: Private JIT pool tag used by the owner-PR dispatcher
+        description: Required private JIT runner pool tag
         type: choice
-        options:
-        - private
-        required: false
-        default: private
+        options: [private]
+        required: true
       pr_number:
         description: Trusted owner PR number set by the metadata-only dispatcher
         type: string
@@ -198,7 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_SHA: ${{ inputs.pr_sha }}
-          VALIDATION_RESULT: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+          VALIDATION_RESULT: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'skipped') && 'failure' || 'success' }}
           VALIDATION_RUN_ID: ${{ github.run_id }}
         run: |
           python3 - <<'PY'
