@@ -20,7 +20,6 @@ on:
         options: [private]
 permissions:
   contents: read
-  security-events: write
 
 concurrency:
   group: semgrep-ce-${{ github.workflow }}-${{ github.ref }}
@@ -51,12 +50,16 @@ jobs:
         run: |
           jq -r '"Semgrep CE reported \(.results | length) finding(s). Review semgrep.sarif and the scan log."' semgrep.json
 
-      - name: Upload findings to GitHub code scanning
+      - name: Retain scan report (semgrep)
         if: >-
           always() && hashFiles('semgrep.sarif') != '' &&
           (github.event_name != 'pull_request' ||
           github.event.pull_request.head.repo.full_name == github.repository)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          sarif_file: semgrep.sarif
-          category: semgrep-ce-community
+          name: scan-report-semgrep-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            semgrep.sarif
+            semgrep.json
+          if-no-files-found: warn
+          retention-days: 14
