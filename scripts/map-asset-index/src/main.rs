@@ -107,7 +107,7 @@ fn main() -> Result<()> {
             let reader = PakFileReader::new(&pak_path)
                 .with_context(|| format!("opening {}", pak_path.display()))?;
             for cooked_path in reader.list_files()? {
-                if let Some((map_id, asset_path)) = cooked_map_path(&cooked_path.to_string()) {
+                if let Some((map_id, asset_path)) = cooked_map_path(cooked_path.as_ref()) {
                     maps.insert((map_id, asset_path));
                 }
             }
