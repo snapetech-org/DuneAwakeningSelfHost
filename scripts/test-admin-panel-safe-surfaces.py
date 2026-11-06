@@ -3557,6 +3557,68 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.panel.import_backup_archive("bad.tar.gz", base64.b64encode(bad_buffer.getvalue()).decode(), "")
 
+    def test_configuration_backup_restores_mounted_private_files_without_links(self):
+        # The host's private source path is intentionally unavailable inside
+        # the Admin container; its dedicated read-only mount is available.
+        (self.workspace / "config/secrets").symlink_to(self.workspace / "unmounted-host-private-source")
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir(mode=0o700)
+        key = mounted / "desired-state-hmac.secret"
+        key.write_text("a" * 64)
+        os.link(key, mounted / "same-material.secret")
+        for name in ("change-intelligence-hmac.secret", "feature-readiness-history-hmac.secret",
+                     "credential-lifecycle-hmac.secret"):
+            (mounted / name).write_text("b" * 64)
+        output = self.workspace / "configuration.tgz"
+        self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertEqual(0o600, output.stat().st_mode & 0o777)
+        with tarfile.open(output, "r:gz") as archive:
+            self.assertTrue(archive.getmember("config/secrets").isdir())
+            self.assertFalse(any(member.issym() or member.islnk() for member in archive))
+            self.assertTrue(archive.getmember("config/secrets/desired-state-hmac.secret").isfile())
+        for child in mounted.iterdir():
+            child.unlink()
+        mounted.rmdir()
+        restored = self.workspace / "isolated-restore"
+        self.panel.safe_extract_restore_archive(output, restored)
+        self.assertEqual("a" * 64, (restored / "config/secrets/desired-state-hmac.secret").read_text())
+        self.assertEqual("a" * 64, (restored / "config/secrets/same-material.secret").read_text())
+
+    def test_configuration_backup_rejects_nested_private_links_and_oversized_trees(self):
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir()
+        outside = self.workspace / "outside-material"
+        outside.write_text("not selected for backup")
+        linked = mounted / "unexpected-link"
+        linked.symlink_to(outside)
+        output = self.workspace / "configuration.tgz"
+        with self.assertRaisesRegex(ValueError, "link or special file"):
+            self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertFalse(output.exists())
+        linked.unlink()
+        with (mounted / "oversized").open("wb") as handle:
+            handle.truncate(16 * 1024 * 1024 + 1)
+        with self.assertRaisesRegex(ValueError, "bounded configuration scope"):
+            self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertFalse(output.exists())
+
+    def test_configuration_backup_rejects_private_file_rotation_during_capture(self):
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir()
+        key = mounted / "desired-state-hmac.secret"
+        key.write_text("before")
+        original = tarfile.TarFile.addfile
+
+        def rotate_after_read(archive, info, fileobj=None):
+            result = original(archive, info, fileobj)
+            if info.name == "config/secrets/desired-state-hmac.secret":
+                key.write_text("rotated material")
+            return result
+
+        with mock.patch.object(tarfile.TarFile, "addfile", rotate_after_read):
+            with self.assertRaisesRegex(ValueError, "changed during archival"):
+                self.panel.create_configuration_archive(self.workspace / "configuration.tgz", private_mount=mounted)
+
     def test_native_restore_dry_run_resolves_current_backup_layout(self):
         backup_set = self.panel.BACKUPS_ROOT / "maintenance" / "fixture"
         backup_set.mkdir(parents=True)

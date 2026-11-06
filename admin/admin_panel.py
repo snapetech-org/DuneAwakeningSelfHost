@@ -14,6 +14,7 @@ import importlib.util
 import json
 import math
 import os
+import itertools
 import pathlib
 import re
 import secrets
@@ -11527,22 +11528,100 @@ def secure_admin_backup_path(path, directory=False):
     return path
 
 
-def add_tree_archive(archive_path, entries):
+def materialized_archive_members(source, arcname):
+    """Snapshot one selected private tree without following nested links."""
+    root = pathlib.Path(source).resolve(strict=True)
+    name = pathlib.PurePosixPath(arcname)
+    if not root.is_dir() or root in {pathlib.Path('/'), ROOT.resolve(), CONFIG_ROOT.resolve()}:
+        raise ValueError("private recovery tree must be a dedicated directory")
+    if name.is_absolute() or ".." in name.parts:
+        raise ValueError("private recovery archive name must be relative")
+    members = []
+    total = 0
+    for path in itertools.chain((root,), root.rglob("*")):
+        metadata = path.lstat()
+        if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+            raise ValueError("private recovery tree contains a link or special file")
+        total += metadata.st_size if stat.S_ISREG(metadata.st_mode) else 0
+        if len(members) >= 4096 or total > 16 * 1024 * 1024:
+            raise ValueError("private recovery tree exceeds its bounded configuration scope")
+        members.append((path, str(name / path.relative_to(root)), metadata))
+    return members
+
+
+def add_tree_archive(archive_path, entries, *, materialized_roots=()):
     added = []
     skipped = []
-    with tarfile.open(archive_path, "w:gz") as archive:
-        for source, arcname in entries:
-            source = pathlib.Path(source)
-            if not source.exists():
-                skipped.append({"path": str(source), "reason": "missing"})
-                continue
-            try:
-                archive.add(source, arcname=arcname)
-                added.append({"path": str(source), "archiveName": arcname})
-            except (OSError, tarfile.TarError) as exc:
-                skipped.append({"path": str(source), "reason": str(exc)})
-    secure_admin_backup_path(archive_path)
+    private_members = []
+    private_names = set()
+    for source, arcname in materialized_roots:
+        private_members.extend(materialized_archive_members(source, arcname))
+        private_names.add(str(pathlib.PurePosixPath(arcname)))
+
+    def omit_materialized(info):
+        if any(info.name == name or info.name.startswith(name + "/") for name in private_names):
+            return None
+        return info
+
+    archive_path = pathlib.Path(archive_path)
+    descriptor = os.open(archive_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(descriptor)
+    try:
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for source, arcname in entries:
+                source = pathlib.Path(source)
+                if not source.exists():
+                    skipped.append({"path": str(source), "reason": "missing"})
+                    continue
+                try:
+                    archive.add(source, arcname=arcname, filter=omit_materialized)
+                    added.append({"path": str(source), "archiveName": arcname})
+                except (OSError, tarfile.TarError) as exc:
+                    skipped.append({"path": str(source), "reason": str(exc)})
+            for source, arcname, expected in private_members:
+                info = archive.gettarinfo(str(source), arcname=arcname)
+                if stat.S_ISDIR(expected.st_mode):
+                    info.type = tarfile.DIRTYPE
+                    info.linkname = ""
+                    info.size = 0
+                    info.mode = 0o700
+                    archive.addfile(info)
+                    continue
+                descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(descriptor, "rb") as handle:
+                    identity = lambda value: (value.st_dev, value.st_ino, value.st_mode,
+                                               value.st_uid, value.st_gid, value.st_size, value.st_mtime_ns)
+                    if identity(os.fstat(handle.fileno())) != identity(expected):
+                        raise ValueError("private recovery file changed before archival")
+                    # Serialize regular file bytes even when two selected names are
+                    # hard links. Restore archives must not depend on link targets.
+                    info.type = tarfile.REGTYPE
+                    info.linkname = ""
+                    info.size = expected.st_size
+                    info.mode = 0o600
+                    archive.addfile(info, handle)
+                    if identity(os.fstat(handle.fileno())) != identity(expected) or identity(source.lstat()) != identity(expected):
+                        raise ValueError("private recovery file changed during archival")
+            added.extend({"path": str(source), "archiveName": name} for source, name in materialized_roots)
+    finally:
+        secure_admin_backup_path(archive_path)
     return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
+
+
+def create_configuration_archive(archive_path, *, private_mount=None):
+    entries = [(CONFIG_ROOT.resolve(), "config")]
+    if ENV_FILE.exists():
+        entries.append((ENV_FILE.resolve(), ".env"))
+    secret_root = CONFIG_ROOT / "secrets"
+    private_mount = pathlib.Path(private_mount) if private_mount is not None else pathlib.Path("/workspace-secret-files")
+    if not secret_root.is_dir() and private_mount.is_dir():
+        secret_root = private_mount
+    roots = []
+    if secret_root.is_dir():
+        roots.append((secret_root, "config/secrets"))
+    elif secret_root.is_symlink():
+        raise ValueError("configured private recovery directory is unavailable")
+    return add_tree_archive(archive_path, entries, materialized_roots=roots)
 
 
 def archive_operator_evidence(archive_path):
@@ -11821,10 +11900,7 @@ def create_maintenance_backup(job):
     except Exception as exc:
         result["warnings"].append({"artifact": "postgresLayers", "error": str(exc)})
 
-    archive_entries = [(CONFIG_ROOT, "config")]
-    if ENV_FILE.exists():
-        archive_entries.append((ENV_FILE, ".env"))
-    result["artifacts"]["config"] = add_tree_archive(backup_dir / "config-and-env.tgz", archive_entries)
+    result["artifacts"]["config"] = create_configuration_archive(backup_dir / "config-and-env.tgz")
 
     data_root = ROOT / "data"
     server_saved = data_root / "server-saved"

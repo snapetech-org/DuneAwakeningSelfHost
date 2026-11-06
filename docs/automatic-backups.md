@@ -36,6 +36,17 @@ container transfers private artifacts to `DUNE_HOST_UID`/`DUNE_HOST_GID` with
 directory mode `0700` and file mode `0600`, so host-side restore tooling can
 read them without widening permissions.
 
+The configuration archive stores private recovery files as regular files under
+`config/secrets`. In the Admin container, a host-only `config/secrets` symlink
+can be unavailable while the dedicated `/workspace-secret-files` mount is
+readable. The backup uses that mounted source and replaces the unavailable link
+in the archive with a private directory and file contents. Nested links and
+special files are rejected; the selected private tree is limited to 4,096
+members and 16 MiB. File rotation during capture fails the attempt. Archives
+start with mode `0600`, including failed partial attempts, and existing archive
+files are never overwritten. The normal copied-ledger and recovery-material
+verification remains mandatory.
+
 ## Collision prevention
 
 Panel backups, executing browser maintenance, `scripts/backup-state.sh`, and
