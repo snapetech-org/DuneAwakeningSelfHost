@@ -1,3 +1,4 @@
+import shlex
 #!/usr/bin/env python3
 import json
 import os
@@ -384,8 +385,10 @@ sleep() { :; }
         self.assertIn("DUNE_PRODUCTION_HOST=$required_q", push)
         self.assertIn('remote_env="${remote_workspace%/}/$remote_env"', push)
         self.assertIn('--pre-change-backup', push)
-        for support in deployment_cli.SUPPORT_FILES:
-            self.assertIn(support, push)
+        support_block = push.split("for support in ", 1)[1].split("; do", 1)[0]
+        staged_support = set(shlex.split(support_block.replace("\\\n", " ")))
+        self.assertTrue(deployment_cli.SUPPORT_FILES.issubset(staged_support),
+                        "every support dependency must actually be staged")
 
     def test_staged_apply_is_verified_atomic_and_has_source_rollback(self):
         stage = self.root / "stage"

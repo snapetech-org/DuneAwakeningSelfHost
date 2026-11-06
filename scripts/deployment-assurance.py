@@ -58,6 +58,7 @@ SUPPORT_FILES = {
     "admin/runtime_security.py",
     "scripts/deployment-assurance.py",
     "scripts/deploy-admin-panel.sh",
+    "scripts/push-assured-control-plane.sh",
     "scripts/rollout-runtime-security.py",
     "scripts/check-current-steam-build.py",
     "scripts/check-steam-update.sh",
