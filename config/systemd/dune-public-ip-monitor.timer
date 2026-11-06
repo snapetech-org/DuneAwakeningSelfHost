@@ -3,7 +3,8 @@ Description=Check for Dune public IP changes
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=DUNE_PUBLIC_IP_MONITOR_INTERVAL_PLACEHOLDERmin
+OnUnitInactiveSec=DUNE_PUBLIC_IP_MONITOR_INTERVAL_PLACEHOLDERmin
+AccuracySec=1min
 Persistent=true
 Unit=dune-public-ip-monitor.service
 
