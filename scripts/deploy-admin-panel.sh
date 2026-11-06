@@ -22,6 +22,7 @@ run_admin_tests() {
     python3 scripts/test-host-service-control.py
     python3 scripts/test-rollout-runtime-security.py
     python3 scripts/test-backup-verification-view.py
+    python3 scripts/test-snapshot-operator-evidence.py
     python3 scripts/test-compose-file-protocol.py
   )
 }
