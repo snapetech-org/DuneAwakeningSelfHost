@@ -1,5 +1,5 @@
-import shlex
 #!/usr/bin/env python3
+import shlex
 import json
 import os
 import re
