@@ -266,6 +266,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.headers = {}
         handler.require_token()
 
+    def test_storage_diagnostic_measures_capacity_without_backup_enumeration(self):
+        handler = object.__new__(self.panel.Handler)
+        self.panel.BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(self.panel, "backup_inventory", side_effect=AssertionError("capacity probe must not traverse backups")), mock.patch.object(self.panel, "docker_container_stats", return_value=[]):
+            result = handler.command_console_operation("storage-status")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["readOnly"])
+        self.assertFalse(result["backupInventoryEnumerated"])
+        self.assertGreater(result["backupStorage"]["totalBytes"], 0)
+        self.assertEqual(str(self.panel.BACKUPS_ROOT), result["backupStorage"]["path"])
+
     def test_invalid_token_audit_is_bounded_per_peer_and_credential(self):
         handler = object.__new__(self.panel.Handler)
         handler.path = "/api/status"

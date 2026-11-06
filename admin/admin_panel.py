@@ -16901,9 +16901,16 @@ class Handler(BaseHTTPRequestHandler):
             """)[0]
             return {"ok": not any(int(value or 0) for value in counts.values()), "readOnly": True, **counts}
         if command_id == "storage-status":
-            disk = shutil.disk_usage(ROOT)
-            backups = backup_inventory(50)
-            return {"ok": True, "workspace": {"path": str(ROOT), "totalBytes": disk.total, "usedBytes": disk.used, "freeBytes": disk.free, "usedPercent": round(disk.used / disk.total * 100, 1) if disk.total else None}, "backupSetsReturned": len(backups.get("sets") or []), "backupRoot": str(BACKUPS_ROOT), "containers": docker_container_stats(live_stats=False)}
+            def capacity(path):
+                disk = shutil.disk_usage(path)
+                return {"path": str(path), "totalBytes": disk.total, "usedBytes": disk.used,
+                        "freeBytes": disk.free, "usedPercent": round(disk.used / disk.total * 100, 1) if disk.total else None}
+
+            # This bounded diagnostic measures capacity. Backup discovery and
+            # verification have their own endpoints and may traverse large trees.
+            return {"ok": True, "readOnly": True, "workspace": capacity(ROOT),
+                    "backupStorage": capacity(BACKUPS_ROOT), "backupRoot": str(BACKUPS_ROOT),
+                    "backupInventoryEnumerated": False, "containers": docker_container_stats(live_stats=False)}
         if command_id == "cpu-affinity-status":
             rows = []
             for container in docker_project_containers():
