@@ -428,6 +428,10 @@ class Store:
                 good_seconds += duration
             else:
                 bad_seconds += duration
+        return Store._window_from_seconds(good_seconds, bad_seconds, excluded_seconds, cutoff, now, target)
+
+    @staticmethod
+    def _window_from_seconds(good_seconds, bad_seconds, excluded_seconds, cutoff, now, target):
         observed = good_seconds + bad_seconds
         availability = good_seconds / observed if observed else None
         allowed_ratio = 1.0 - target
@@ -444,27 +448,54 @@ class Store:
             "errorBudgetRemaining": remaining,
         }
 
+    @staticmethod
+    def _aggregate_window(connection, objective_id, oldest, cutoff, now, target):
+        # Preserve interval clipping and exclusion semantics without materializing
+        # hundreds of thousands of Python rows for every status request.
+        row = connection.execute("""
+            with durations as (
+                select good, excluded,
+                    max(0.0, min(:now, observed_at) -
+                        max(:cutoff, min(:now, observed_at) - interval_seconds)) as duration
+                from samples
+                where objective_id=:objective and observed_at>=:oldest
+                order by observed_at
+            )
+            select
+                total(case when not excluded and good then duration else 0.0 end),
+                total(case when not excluded and not good then duration else 0.0 end),
+                total(case when excluded then duration else 0.0 end)
+            from durations
+        """, {"now": now, "cutoff": cutoff, "oldest": oldest, "objective": objective_id}).fetchone()
+        return Store._window_from_seconds(*row, cutoff, now, target)
+
     def status(self, *, limit=100, now=None):
         policy = self.policy
         epoch = float(self.now() if now is None else now)
         oldest = epoch - max(WINDOWS)
         with self.connect() as connection:
-            samples = connection.execute("select * from samples where observed_at>=? order by observed_at", (oldest - policy["maxSampleGapSeconds"],)).fetchall()
+            connection.execute("begin")  # One consistent view for every objective and window.
+            latest = {}
+            windows_by_objective = {}
+            for objective in policy["objectives"]:
+                latest[objective["id"]] = connection.execute(
+                    "select * from samples where objective_id=? and observed_at>=? order by observed_at desc, rowid desc limit 1",
+                    (objective["id"], oldest - policy["maxSampleGapSeconds"]),
+                ).fetchone()
+                windows_by_objective[objective["id"]] = {
+                    str(seconds): self._aggregate_window(connection, objective["id"],
+                        oldest - policy["maxSampleGapSeconds"], epoch - seconds, epoch, objective["targetAvailability"])
+                    for seconds in WINDOWS
+                }
             incidents = connection.execute("select * from incidents order by opened_at desc limit ?", (max(1, min(int(limit), 1000)),)).fetchall()
             events = connection.execute("select * from incident_events order by sequence desc limit ?", (max(1, min(int(limit), 1000)),)).fetchall()
             maintenance = connection.execute("select * from maintenance_windows where ends_at>=? or cancelled_at is not null order by starts_at desc limit 100", (epoch - 30 * 86400,)).fetchall()
             last_snapshot = connection.execute("select id,observed_at,context_json from snapshots order by observed_at desc limit 1").fetchone()
-        by_objective = {}
-        for row in samples:
-            by_objective.setdefault(row["objective_id"], []).append(row)
         open_by_objective = {row["objective_id"]: dict(row) for row in incidents if row["status"] == "open"}
         objectives = []
         for objective in policy["objectives"]:
-            objective_samples = by_objective.get(objective["id"], [])
-            current = objective_samples[-1] if objective_samples else None
-            windows = {}
-            for seconds in WINDOWS:
-                windows[str(seconds)] = self._window(objective_samples, epoch - seconds, epoch, objective["targetAvailability"])
+            current = latest[objective["id"]]
+            windows = windows_by_objective[objective["id"]]
             primary = windows[str(max(WINDOWS))]
             objectives.append({
                 **objective,

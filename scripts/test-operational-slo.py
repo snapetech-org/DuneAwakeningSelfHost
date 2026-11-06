@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import random
 import sqlite3
 import tempfile
 import unittest
@@ -149,6 +150,29 @@ class OperationalSLOTest(unittest.TestCase):
         self.assertIn('dash_slo_objective_good{objective="farm",severity="critical"} 1', metrics)
         self.assertIn("dash_slo_error_budget_burn_rate", metrics)
         self.assertNotIn(str(self.path), metrics)
+
+    def test_sql_windows_match_reference_clipping_exclusion_and_empty_history(self):
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("create table samples(objective_id text, observed_at real, interval_seconds real, good integer, excluded integer)")
+        generator = random.Random(20261106)
+        values = [("farm", generator.uniform(1000, 12000), generator.uniform(0, 600), generator.randrange(2), generator.randrange(2)) for _ in range(2000)]
+        values += [("farm", 11000, 300, 1, 0), ("farm", 10000, 0, 0, 0), ("other", 9999, 300, 0, 0)]
+        connection.executemany("insert into samples values(?,?,?,?,?)", values)
+        oldest, now = 2000.0, 10000.0
+        samples = connection.execute("select * from samples where objective_id='farm' and observed_at>=? order by observed_at", (oldest,)).fetchall()
+        for cutoff in (0, 5000, 9700, 10000):
+            expected = self.store._window(samples, cutoff, now, 0.99)
+            actual = self.store._aggregate_window(connection, "farm", oldest, cutoff, now, 0.99)
+            self.assertEqual(set(expected), set(actual))
+            for key, value in expected.items():
+                if value is None:
+                    self.assertIsNone(actual[key], key)
+                else:
+                    self.assertAlmostEqual(value, actual[key], places=8, msg=key)
+        expected = self.store._window([], 0, now, 0.99)
+        self.assertEqual(expected, self.store._aggregate_window(connection, "missing", oldest, 0, now, 0.99))
+        connection.close()
 
     def test_consistent_backup_and_corruption_detection(self):
         self.record(backup=False)
