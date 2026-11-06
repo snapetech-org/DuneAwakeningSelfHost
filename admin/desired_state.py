@@ -354,8 +354,8 @@ class Store:
         self._secure()
         return self.verify()
 
-    def _sign(self, payload):
-        return hmac.new(self.secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
+    def _sign(self, payload, *, secret=None):
+        return hmac.new(self.secret if secret is None else secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
 
     @staticmethod
     def _finding_document(row):
@@ -577,6 +577,10 @@ class Store:
         own = connection is None
         connection = connection or self.connect(readonly=True)
         try:
+            # Bind this complete verification to one key, then detect rotation
+            # before accepting it. Reading the file per retained row overloads
+            # filesystem/sensor work without strengthening the row HMACs.
+            secret = self.secret
             integrity = connection.execute("pragma integrity_check").fetchone()[0]
             triggers = {row["name"] for row in connection.execute("select name from sqlite_master where type='trigger'")}
             required = {"desired_state_baselines_no_update", "desired_state_baselines_no_delete", "desired_state_events_no_update", "desired_state_events_no_delete"}
@@ -584,7 +588,7 @@ class Store:
             for row in connection.execute("select * from baselines order by created_at,id"):
                 snapshot = json.loads(row["snapshot_json"])
                 document = {"id": row["id"], "createdAt": row["created_at"], "actor": row["actor"], "reason": row["reason"], "snapshotSha256": row["snapshot_sha256"], "snapshot": snapshot}
-                if hashlib.sha256(_canonical(snapshot).encode()).hexdigest() != row["snapshot_sha256"] or not hmac.compare_digest(self._sign(document), row["signature"]):
+                if hashlib.sha256(_canonical(snapshot).encode()).hexdigest() != row["snapshot_sha256"] or not hmac.compare_digest(self._sign(document, secret=secret), row["signature"]):
                     baselines_valid = False
             observations_valid = True
             for row in connection.execute("select * from observations order by id"):
@@ -593,11 +597,11 @@ class Store:
                     "snapshotSha256": row["snapshot_sha256"], "driftCount": row["drift_count"],
                     "criticalCount": row["critical_count"], "maintenanceActive": bool(row["maintenance_active"]),
                 }
-                if not hmac.compare_digest(self._sign(document), row["signature"]):
+                if not hmac.compare_digest(self._sign(document, secret=secret), row["signature"]):
                     observations_valid = False
             findings_valid = True
             for row in connection.execute("select * from findings order by id"):
-                if not row["signature"] or not hmac.compare_digest(self._sign(self._finding_document(row)), row["signature"]):
+                if not row["signature"] or not hmac.compare_digest(self._sign(self._finding_document(row), secret=secret), row["signature"]):
                     findings_valid = False
             events_valid = True
             previous = None
@@ -605,9 +609,11 @@ class Store:
             for row in connection.execute("select * from events order by sequence"):
                 event_count += 1
                 document = {"eventType": row["event_type"], "createdAt": row["created_at"], "actor": row["actor"], "payload": json.loads(row["payload_json"]), "previousSignature": row["previous_signature"]}
-                if row["previous_signature"] != previous or not hmac.compare_digest(self._sign(document), row["signature"]):
+                if row["previous_signature"] != previous or not hmac.compare_digest(self._sign(document, secret=secret), row["signature"]):
                     events_valid = False
                 previous = row["signature"]
+            if not hmac.compare_digest(secret, self.secret):
+                raise ValueError("desired-state HMAC key changed during verification")
             ok = integrity == "ok" and required.issubset(triggers) and baselines_valid and observations_valid and findings_valid and events_valid
             return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "baselineSignaturesValid": baselines_valid, "observationSignaturesValid": observations_valid, "findingSignaturesValid": findings_valid, "eventChainValid": events_valid, "eventCount": event_count, "lastEventSignature": previous}
         except (sqlite3.Error, ValueError, json.JSONDecodeError, OSError) as exc:
