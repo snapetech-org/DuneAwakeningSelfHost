@@ -29,6 +29,7 @@ INPUT_FILES = (
     "scripts/generate-rabbitmq-cert.sh",
     "scripts/check-rabbitmq-cert-sans.sh",
     "scripts/restart-target.sh",
+    "scripts/map_catalog.py",
     "scripts/install-public-ip-monitor.sh",
     "config/systemd/dune-public-ip-monitor.service",
     "config/systemd/dune-public-ip-monitor.timer",
@@ -344,6 +345,7 @@ def _copy_workspace(root, stage):
     for relative in (
         "scripts/public-ip-monitor.sh", "scripts/generate-rabbitmq-cert.sh",
         "scripts/check-rabbitmq-cert-sans.sh", "scripts/restart-target.sh",
+        "scripts/map_catalog.py",
         "scripts/install-public-ip-monitor.sh",
     ):
         os.chmod(stage / relative, 0o700)
@@ -401,7 +403,18 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             bin_dir.mkdir(mode=0o700)
             command_log = stage / "commands.log"
             for name, body in {
-                "docker": "#!/bin/sh\nprintf 'unexpected docker invocation\\n' >>\"$DUNE_PUBLIC_IP_CANARY_COMMAND_LOG\"\nexit 97\n",
+                "docker": (
+                    "#!/usr/bin/env python3\nimport json, os, sys\n"
+                    "args = sys.argv[1:]\n"
+                    "if (args[:1] == ['compose'] and args[-4:] == ['config', '--format', 'json', '--no-interpolate']\n"
+                    "        and '--env-file' in args and args[args.index('--env-file') + 1] == os.devnull):\n"
+                    "    print(json.dumps({'services': {'survival': {'command': ['-PartitionIndex=1'],\n"
+                    "        'labels': {'dune.map.database-name': 'Survival_1'}}}}))\n"
+                    "    raise SystemExit(0)\n"
+                    "with open(os.environ['DUNE_PUBLIC_IP_CANARY_COMMAND_LOG'], 'a') as log:\n"
+                    "    log.write('unexpected docker invocation\\n')\n"
+                    "raise SystemExit(97)\n"
+                ),
                 "systemctl": "#!/bin/sh\nprintf 'systemctl %s\\n' \"$*\" >>\"$DUNE_PUBLIC_IP_CANARY_COMMAND_LOG\"\n",
                 "sudo": "#!/bin/sh\nexec \"$@\"\n",
             }.items():
@@ -530,7 +543,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
                 and f"WorkingDirectory={stage}" in service_text
                 and f"ExecStart={stage}/scripts/public-ip-monitor.sh {fixture_env} check" in service_text
                 and "User=canary-user" in service_text and "Group=canary-group" in service_text
-                and "OnUnitActiveSec=7min" in timer_text
+                and "OnUnitInactiveSec=7min" in timer_text
                 and "systemctl daemon-reload" in command_text
                 and "systemctl enable --now dune-public-ip-monitor.timer" in command_text
             )

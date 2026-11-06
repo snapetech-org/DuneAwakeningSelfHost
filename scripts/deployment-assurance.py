@@ -85,6 +85,7 @@ SUPPORT_FILES = {
     "scripts/generate-rabbitmq-cert.sh",
     "scripts/check-rabbitmq-cert-sans.sh",
     "scripts/restart-target.sh",
+    "scripts/map_catalog.py",
     "scripts/install-public-ip-monitor.sh",
     "config/systemd/dune-public-ip-monitor.service",
     "config/systemd/dune-public-ip-monitor.timer",
