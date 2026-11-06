@@ -95,3 +95,8 @@ fixture server were closed afterward.
 A concurrent branch restored the former private-only runner policy. Its history
 was merged, while the November 3 repo-specific hosted-runner owner directive
 supplied in this session remains authoritative. CodeQL stays disabled.
+
+Hosted validation also exposed older Compose parsing of uninterpolated short
+bind mounts. Four parameterized mounts now use long syntax. Compose 2.33.0
+renders all 43 services without reading the environment file, and comparison
+with Compose 5.6.1 confirms unchanged bind sources, targets and read-only flags.

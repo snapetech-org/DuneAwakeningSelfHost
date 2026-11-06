@@ -142,7 +142,10 @@ services:
     volumes:
       - ./scripts/docker_api_proxy.py:/workspace/scripts/docker_api_proxy.py:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${DUNE_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-.}}/backups/admin-panel:/restore-backups:ro
+      - type: bind
+        source: ${DUNE_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-.}}/backups/admin-panel
+        target: /restore-backups
+        read_only: true
       - dune-docker-api:/run/dune-docker-api
     healthcheck:
       test: ["CMD", "/usr/local/bin/python3", "/workspace/scripts/docker_api_proxy.py", "--healthcheck"]
@@ -767,7 +770,10 @@ services:
       - "7895:7895/udp"
     volumes:
       - .:/workspace:ro
-      - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
+      - type: bind
+        source: ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}
+        target: /tmp/oodle/liboodle-data-shared.so
+        read_only: true
       - ./data/server-saved/deep-desert:/home/dune/server/DuneSandbox/Saved
     networks:
       default:
@@ -1228,7 +1234,10 @@ services:
       - *curl-bin-volume
       - ./admin:/workspace/admin:ro
       - .:/source-workspace:ro
-      - ${DUNE_STEAM_SERVER_DIR}:/steam-server:ro
+      - type: bind
+        source: ${DUNE_STEAM_SERVER_DIR}
+        target: /steam-server
+        read_only: true
       - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config
       - ./config/secrets:/workspace-secret-files

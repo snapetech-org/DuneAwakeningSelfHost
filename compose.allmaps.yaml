@@ -285,6 +285,9 @@ services:
     ports: ["7807:7807/udp", "7918:7918/udp"]
     volumes:
       - .:/workspace:ro
-      - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
+      - type: bind
+        source: ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}
+        target: /tmp/oodle/liboodle-data-shared.so
+        read_only: true
       - ./data/server-saved/deep-desert-pvp:/home/dune/server/DuneSandbox/Saved
     networks: {default: {ipv4_address: 172.31.240.43}}
