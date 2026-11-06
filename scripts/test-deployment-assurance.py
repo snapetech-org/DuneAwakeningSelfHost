@@ -287,6 +287,16 @@ sleep() { :; }
             self.assertNotEqual(result.returncode, 0)
         self.assertFalse(marker.exists())
 
+    def test_convergence_requests_share_the_remaining_deadline(self):
+        function = self.shell_function("convergence_request_timeout")
+        for offset, expected in [(600, "120"), (90, "90"), (0, "1"), (-30, "1")]:
+            fixture = function + f'\nconvergence_request_timeout "$((SECONDS + {offset}))"\n'
+            result = subprocess.run(["bash", "-c", fixture], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, expected)
+        result = subprocess.run(["bash", "-c", function + '\nconvergence_request_timeout invalid\n'], capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_start_recovery_waits_for_the_exact_manifest_without_resubmitting(self):
         work = self.root / "recovery"
         work.mkdir()

@@ -207,6 +207,17 @@ verified_existing_backup() {
   printf '%s\n' "$relative"
 }
 
+# Integrity aggregation can take longer than the quick HTTP health probe budget.
+# Bound each request by both 120 seconds and the remaining convergence window.
+convergence_request_timeout() {
+  local limit="${1:-}" remaining
+  [[ "$limit" =~ ^[0-9]{1,10}$ ]] || return 2
+  remaining=$((10#$limit - SECONDS))
+  (( remaining > 120 )) && remaining=120
+  (( remaining < 1 )) && remaining=1
+  printf '%s' "$remaining"
+}
+
 wait_for_assurance_health() {
   local timeout interval required_samples deadline consecutive=0
   timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
@@ -225,10 +236,10 @@ wait_for_assurance_health() {
   }
   deadline=$((SECONDS + timeout))
   while (( SECONDS <= deadline )); do
-    if api_get /api/ops/desired-state 30 >"$work/convergence-desired.json" \
-      && api_get /api/ops/change-intelligence 30 >"$work/convergence-change.json" \
-      && api_get /api/ops/slo 30 >"$work/convergence-slo.json" \
-      && curl -fsS --max-time 30 --get \
+    if api_get /api/ops/desired-state "$(convergence_request_timeout "$deadline")" >"$work/convergence-desired.json" \
+      && api_get /api/ops/change-intelligence "$(convergence_request_timeout "$deadline")" >"$work/convergence-change.json" \
+      && api_get /api/ops/slo "$(convergence_request_timeout "$deadline")" >"$work/convergence-slo.json" \
+      && curl -fsS --max-time "$(convergence_request_timeout "$deadline")" --get \
         --data-urlencode 'query=dash_incident_readiness_certification_ready' \
         "$prometheus_url/api/v1/query" >"$work/convergence-prometheus.json"; then
       if python3 - "$work/convergence-desired.json" "$work/convergence-change.json" "$work/convergence-slo.json" "$work/convergence-prometheus.json" >"$work/convergence.json" <<'PY'
