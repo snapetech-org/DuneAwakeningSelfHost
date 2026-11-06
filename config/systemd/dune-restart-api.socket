@@ -5,8 +5,8 @@ Before=docker.service
 [Socket]
 ListenStream=/run/dune-restart-api/restart.sock
 SocketUser=DUNE_SERVICE_USER_PLACEHOLDER
-SocketGroup=DUNE_SERVICE_GROUP_PLACEHOLDER
-SocketMode=0666
+SocketGroup=root
+SocketMode=0660
 DirectoryMode=0700
 RemoveOnStop=true
 Service=dune-restart-api.service

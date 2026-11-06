@@ -30,6 +30,7 @@ sed \
   -e "s#DUNE_SERVICE_GROUP_PLACEHOLDER#$service_group#g" \
   -e "s#DUNE_RESTART_API_ROOT_PLACEHOLDER#$repo_root#g" \
   -e "s#DUNE_RESTART_API_ENV_PLACEHOLDER#$env_file#g" \
+  -e "s#DUNE_RESTART_API_HOST_PLACEHOLDER#$(hostname -s)#g" \
   "$service_template" > "$service_tmp"
 sed \
   -e "s#DUNE_SERVICE_USER_PLACEHOLDER#$service_user#g" \

@@ -6003,6 +6003,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertGreaterEqual(len(mutation_steps), 9)
         self.assertTrue(all(step["requiredCapability"] != "read" for step in mutation_steps))
 
+    def test_service_recovery_contract_requires_a_qualified_live_transport(self):
+        step = {"id": "recover", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "featureGate": "DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE"}
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": False}):
+            result = self.panel._response_recovery_contract(step, {"id": "owner", "capabilities": ["*"]})
+        self.assertTrue(result["featureGateEnabled"])
+        self.assertFalse(result["transportReady"])
+        self.assertFalse(result["ready"])
+
     def test_response_readiness_drill_runs_only_fixed_diagnostics_and_records_digest_receipt(self):
         plan = {
             "incidentKey": "slo:one", "runbookId": "control-plane-availability",
@@ -6035,7 +6043,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             calls.append(command_id)
             return {"ok": True, "bounded": True}
 
-        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}):
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": True, "serviceControlReady": True, "statefulControlReady": True}):
             result = self.panel.run_response_readiness_drill("slo:one", "a" * 64, principal, executor)
         self.assertTrue(result["ready"])
         self.assertFalse(result["recoveryExecuted"])
@@ -6101,7 +6109,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             return {"ok": True, "bounded": True}
 
         gates = {step["featureGate"]: "true" for runbook in policy["runbooks"] for step in runbook["steps"] if step["mutation"]}
-        with mock.patch.dict(os.environ, gates):
+        with mock.patch.dict(os.environ, gates), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": True, "serviceControlReady": True, "statefulControlReady": True}):
             result = self.panel.run_incident_readiness_certification(policy["policySha256"], {"id": "owner", "capabilities": ["*"]}, executor)
         self.assertTrue(result["ready"])
         self.assertEqual(13, result["summary"]["runbooksReady"])

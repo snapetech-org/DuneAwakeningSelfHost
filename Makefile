@@ -1220,3 +1220,10 @@ verify-local-state-ignored:
 	@for path in backups/example captures/example data/example config/tls/example backups-env-example backup-env-example local.env.backup local.env.bak; do \
 		git check-ignore -q "$$path" || exit 1; \
 	done
+
+.PHONY: test-host-service-control
+validate: test-host-service-control
+test-host-service-control:
+	python3 scripts/test-dune-restart-api.py
+	python3 scripts/test-host-service-control.py
+	bash -n scripts/install-dune-restart-api.sh

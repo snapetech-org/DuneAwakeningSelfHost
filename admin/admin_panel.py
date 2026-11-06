@@ -70,6 +70,7 @@ import base_creator
 import base_retirement
 import gameplay_presets
 import command_console
+import host_service_control
 import federated_auth
 import cosmetics_admin
 import progression_admin
@@ -5070,36 +5071,14 @@ def control_docker_service(service, action, fast_dynamic_start=False):
     stateful = service in {"postgres", "admin-rmq", "game-rmq"}
     if stateful and not STATEFUL_SERVICE_CONTROL_ENABLED:
         raise PermissionError("stateful service control is disabled; set DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED=true")
-    script = ROOT / "scripts" / "restart-target.sh"
-    if not script.exists():
-        raise FileNotFoundError("scripts/restart-target.sh is unavailable")
-    env = os.environ.copy()
-    env.update({
-        "ENV_FILE": str(ENV_FILE),
-        "DUNE_RESTART_TARGET": service,
-        "DUNE_RESTART_SERVICES": service,
-        "DUNE_RESTART_ACTION": "shutdown" if action == "stop" else "restart",
-        "DUNE_RESTART_PHASE": action,
-        "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
-        "DUNE_RESTART_ALLOW_STATEFUL": "true" if stateful else "false",
-        "DUNE_RESTART_FAST_DYNAMIC_START": "true" if fast_dynamic_start else "false",
-    })
-    completed = subprocess.run(
-        [str(script), service], cwd=ROOT, env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False,
+    if not SERVICE_CONTROL_ENABLED:
+        raise PermissionError("service control is disabled")
+    if fast_dynamic_start:
+        raise PermissionError("manual recovery requires normal post-start hooks")
+    result = host_service_control.control(
+        os.environ.get("DUNE_RESTART_API_SOCKET", "/run/dune-restart-api.sock"), service, action,
     )
-    result = {
-        "ok": completed.returncode == 0,
-        "service": service,
-        "action": action,
-        "exitCode": completed.returncode,
-        "stdout": completed.stdout[-256 * 1024:],
-        "stderr": completed.stderr[-256 * 1024:],
-        "postState": next((row for row in docker_service_inventory() if row["service"] == service), None),
-        "postHooks": action in ("start", "restart"),
-    }
-    if not result["ok"]:
-        raise RuntimeError((result["stderr"] or result["stdout"] or f"service action exited {completed.returncode}")[-4000:])
+    result["postState"] = next((row for row in docker_service_inventory() if row["service"] == service), None)
     return result
 
 
@@ -10410,11 +10389,17 @@ def _response_recovery_contract(step, principal):
     capability_ready = access_control.has_capability(principal, step["requiredCapability"])
     gate_enabled = bool(gate and os.environ.get(gate, "false").lower() in ("1", "true", "yes", "on"))
     confirmation_ready = not step.get("confirmation") or bool(str(step["confirmation"]).strip())
+    transport_ready = True
+    if gate in {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED"}:
+        transport = host_service_control.health(os.environ.get("DUNE_RESTART_API_SOCKET", "/run/dune-restart-api.sock"))
+        transport_ready = bool(transport.get("qualified") and transport.get("serviceControlReady")
+                               and (gate != "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED" or transport.get("statefulControlReady")))
     return {
         "stepId": step["id"], "surface": step["surface"], "requiredCapability": step["requiredCapability"],
         "capabilityReady": capability_ready, "featureGate": gate, "featureGateEnabled": gate_enabled,
         "confirmation": step.get("confirmation"), "confirmationConfigured": confirmation_ready,
-        "ready": capability_ready and gate_enabled and confirmation_ready,
+        "transportReady": transport_ready,
+        "ready": capability_ready and gate_enabled and confirmation_ready and transport_ready,
     }
 
 
