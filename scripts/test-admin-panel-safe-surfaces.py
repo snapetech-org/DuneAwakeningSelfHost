@@ -5851,6 +5851,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             panel.change_intelligence_cached_status(force=True)
             self.assertIsNone(panel.change_intelligence_verified_cache())
 
+    def test_assurance_finish_reverifies_after_its_audited_intent(self):
+        panel = self.panel
+        verified = {"integrity": {"ok": True}, "openIncidents": [], "readinessCertification": {
+            "currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}}
+        def change(*, force=False):
+            return verified if force else {"integrity": {"ok": False}, "statusDeferred": True}
+        with mock.patch.object(panel, "desired_state_public_status", return_value={"state": "attested", "integrity": {"ok": True}}), mock.patch.object(panel, "change_intelligence_public_status", side_effect=change) as check, mock.patch.object(panel, "operational_slo_public_status", return_value={"overall": "healthy", "integrity": {"ok": True}}), mock.patch.object(panel, "docker_service_inventory", return_value=[{"service": "admin-panel", "state": "running"}]), mock.patch.object(panel, "deployment_assurance_prometheus_ready", return_value=True):
+            result = panel.deployment_assurance_health({"ok": True})
+        self.assertTrue(all(result.values()), result)
+        check.assert_called_once_with(force=True)
+
     def test_change_intelligence_verified_status_is_single_flight_cached_and_forceable(self):
         original_store = self.panel.change_intelligence_store
         original_cache = dict(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE)

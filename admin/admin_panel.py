@@ -10106,7 +10106,9 @@ def deployment_assurance_prometheus_ready():
 
 def deployment_assurance_health(backup):
     desired = desired_state_public_status()
-    change = change_intelligence_public_status(force=False)
+    # The audited finish intent invalidates older status. Reverify after that
+    # write instead of treating a deliberately deferred metrics view as health.
+    change = change_intelligence_public_status(force=True)
     slo = operational_slo_public_status()
     certification = change.get("readinessCertification") or {}
     services = {row["service"]: row for row in docker_service_inventory()}
