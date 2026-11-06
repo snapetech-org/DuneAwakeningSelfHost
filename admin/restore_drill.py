@@ -95,7 +95,15 @@ def select_dump(workspace, requested=None):
         candidates = [resolved]
     else:
         candidates = []
-        for candidate in backup_root.rglob("*.dump"):
+        def eligible_dumps():
+            for directory, child_dirs, filenames in os.walk(backup_root, followlinks=False):
+                # These private restore sources are never selectable; prune
+                # before traversal instead of scanning and rejecting each leaf.
+                child_dirs[:] = [name for name in child_dirs if name != "restore-drills"]
+                for name in filenames:
+                    if name.endswith(".dump"):
+                        yield pathlib.Path(directory) / name
+        for candidate in eligible_dumps():
             try:
                 if candidate.name.startswith(".source-") or "restore-drills" in candidate.parts:
                     continue
