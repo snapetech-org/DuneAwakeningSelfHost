@@ -54,11 +54,6 @@ def env(name, default=""):
 
 
 def secret_env(name, default=""):
-    if os.environ.get(f"{name}_FILE", "").strip():
-        return read_secret_env(name, default)
-    value = FILE_ENV.get(name)
-    if value is not None and value != "":
-        return value
     return read_secret_env(name, default)
 
 

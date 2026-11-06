@@ -174,7 +174,7 @@ def spdx_document(tag: str, commit: str, epoch: int, archive_name: str, archive_
             continue
         relative = name.split("/", 1)[1]
         file_sha256 = sha256_bytes(data)
-        file_sha1 = hashlib.sha1(data).hexdigest()
+        file_sha1 = hashlib.sha1(data, usedforsecurity=False).hexdigest()
         sha1_values.append(file_sha1)
         spdx_id = "SPDXRef-File-" + hashlib.sha256(relative.encode("utf-8")).hexdigest()[:24]
         license_info = "NOASSERTION"
@@ -198,7 +198,7 @@ def spdx_document(tag: str, commit: str, epoch: int, archive_name: str, archive_
             "copyrightText": "NOASSERTION",
         })
         relationships.append({"spdxElementId": "SPDXRef-Package-DASH", "relationshipType": "CONTAINS", "relatedSpdxElement": spdx_id})
-    verification = hashlib.sha1("".join(sorted(sha1_values)).encode("ascii")).hexdigest()
+    verification = hashlib.sha1("".join(sorted(sha1_values)).encode("ascii"), usedforsecurity=False).hexdigest()
     return {
         "spdxVersion": SPDX_SCHEMA,
         "dataLicense": "CC0-1.0",

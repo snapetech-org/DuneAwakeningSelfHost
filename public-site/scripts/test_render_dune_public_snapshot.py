@@ -19,7 +19,7 @@ def load_snapshot_module(env):
 
 
 class PublicSnapshotConfigTest(unittest.TestCase):
-    def test_game_env_database_beats_stale_public_site_database(self):
+    def test_explicit_public_database_beats_stale_game_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             (root / ".env").write_text(
@@ -31,6 +31,7 @@ class PublicSnapshotConfigTest(unittest.TestCase):
                 "DUNE_ROOT": str(root),
                 "STATIC_DIR": str(root / "static"),
                 "DUNE_DATABASE": "dune_sb_1_4_0_0",
+                "DUNE_PUBLIC_STATUS_DB_NAME": "dune_sb_1_4_5_0",
                 "PATH": os.environ.get("PATH", ""),
             })
 
@@ -43,14 +44,16 @@ class PublicSnapshotConfigTest(unittest.TestCase):
                 captured["cwd"] = cwd
                 return "[]\n"
 
-            with mock.patch.object(module.subprocess, "check_output", side_effect=fake_check_output):
-                module.compose_psql("select 1")
+            with mock.patch.object(module.subprocess, "check_output", side_effect=fake_check_output), \
+                 mock.patch.object(module, "postgres_container", return_value="postgres-fixture"):
+                module.docker_psql("select 1")
 
             self.assertEqual(captured["cwd"], root)
             self.assertEqual(captured["cmd"][captured["cmd"].index("-d") + 1], "dune_sb_1_4_5_0")
-            self.assertEqual(captured["cmd"][captured["cmd"].index("--env-file") + 1], str(root / ".env"))
+            self.assertEqual(captured["cmd"][:3], ["docker", "exec", "postgres-fixture"])
+            self.assertNotIn("--env-file", captured["cmd"])
 
-    def test_env_file_selects_authoritative_game_env(self):
+    def test_public_snapshot_does_not_read_private_game_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             live_env = root / "live.env"
@@ -67,9 +70,9 @@ class PublicSnapshotConfigTest(unittest.TestCase):
                 "PATH": os.environ.get("PATH", ""),
             })
 
-            self.assertEqual(module.GAME_ENV_FILE, live_env)
-            self.assertEqual(module.DATABASE, "dune_sb_1_4_5_0")
-            self.assertEqual(module.COMPOSE_FILES, ["compose.yaml", "compose.allmaps.yaml", "compose.patch.yaml"])
+            self.assertEqual(module.DATABASE, "dune_sb_1_5_15_0")
+            self.assertFalse(hasattr(module, "GAME_ENV_FILE"))
+            self.assertFalse(hasattr(module, "COMPOSE_FILES"))
 
     def test_map_health_summary_separates_on_demand_from_offline(self):
         with tempfile.TemporaryDirectory() as tmp:

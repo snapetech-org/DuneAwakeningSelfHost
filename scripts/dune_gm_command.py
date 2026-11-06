@@ -14,6 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "vendor"))
 
 import pika
 from secret_env import read_secret_env
+from http_url import require_http_url
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -287,6 +288,7 @@ def publish_command_management(command_text, route, target_player="", admin_play
     )
     req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii"))
     try:
+        require_http_url(req.full_url)
         with urllib.request.urlopen(req, timeout=float(env("DUNE_GM_COMMAND_HTTP_TIMEOUT_SECONDS", "5"))) as resp:
             response = json.loads(resp.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:

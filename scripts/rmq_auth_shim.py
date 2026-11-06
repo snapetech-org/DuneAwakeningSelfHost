@@ -6,6 +6,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from secret_env import read_secret_env
+from http_url import require_http_url
 
 
 WORLD_UNIQUE_NAME = os.environ["WORLD_UNIQUE_NAME"]
@@ -24,6 +25,7 @@ def parse_form(body: bytes) -> dict[str, str]:
 def post_upstream(path: str, body: bytes, content_type: str | None) -> bytes:
     req = urllib.request.Request(f"{UPSTREAM}{path}", data=body, method="POST")
     req.add_header("Content-Type", content_type or "application/x-www-form-urlencoded")
+    require_http_url(req.full_url)
     with urllib.request.urlopen(req, timeout=5) as response:
         return response.read()
 

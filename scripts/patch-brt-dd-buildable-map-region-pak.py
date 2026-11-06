@@ -647,7 +647,7 @@ def build_replacement_entry_blob(old_blob, compressed_blob, uncompressed_size):
     header = bytearray(old_blob[:73])
     struct.pack_into("<Q", header, 8, len(compressed_blob))
     struct.pack_into("<Q", header, 16, uncompressed_size)
-    header[28:48] = __import__("hashlib").sha1(compressed_blob).digest()
+    header[28:48] = __import__("hashlib").sha1(compressed_blob, usedforsecurity=False).digest()
     struct.pack_into("<Q", header, 60, 73 + len(compressed_blob))
     return bytes(header) + compressed_blob
 
@@ -692,7 +692,7 @@ def patch_entry_header_in_place(data, entry_offset, compressed_blob, uncompresse
         raise RuntimeError("short entry header")
     struct.pack_into("<Q", header, 8, len(compressed_blob))
     struct.pack_into("<Q", header, 16, uncompressed_size)
-    header[28:48] = hashlib.sha1(compressed_blob).digest()
+    header[28:48] = hashlib.sha1(compressed_blob, usedforsecurity=False).digest()
     struct.pack_into("<Q", header, 60, 73 + len(compressed_blob))
     data[entry_offset:entry_offset + 73] = header
 
@@ -708,7 +708,7 @@ def find_footer_base(data):
 def rewrite_footer_index_hash(data, footer_base, footer):
     index_offset = footer["index_offset"]
     index_size = footer["index_size"]
-    index_hash = hashlib.sha1(bytes(data[index_offset:index_offset + index_size])).digest()
+    index_hash = hashlib.sha1(bytes(data[index_offset:index_offset + index_size]), usedforsecurity=False).digest()
     data[footer_base + 44:footer_base + 64] = index_hash
 
 

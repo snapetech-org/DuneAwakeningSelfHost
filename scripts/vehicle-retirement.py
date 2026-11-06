@@ -15,6 +15,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from secret_env import read_secret_env
+from http_url import require_http_url
 
 
 def read_env(path):
@@ -42,6 +43,7 @@ def request_json(method, url, token="", body=None, timeout=240):
         headers["X-Admin-Token"] = token
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
+        require_http_url(request.full_url)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:

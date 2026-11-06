@@ -4,10 +4,13 @@ import base64
 import json
 import os
 import pathlib
+import sys
 import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from http_url import require_http_url
 
 
 def read_env_file(path):
@@ -32,6 +35,7 @@ def request_json(base_url, user, password, path):
     token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
     request = urllib.request.Request(base_url.rstrip("/") + path)
     request.add_header("Authorization", f"Basic {token}")
+    require_http_url(request.full_url)
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 

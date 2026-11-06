@@ -11,12 +11,16 @@ fi
 compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 
 set -- docker compose
-old_ifs="$IFS"
-IFS=:
-for file in $compose_files; do
-  set -- "$@" -f "$file"
+# Split colon-delimited file paths without changing the shell's global IFS.
+remaining_compose_files="$compose_files"
+while [ -n "$remaining_compose_files" ]; do
+  file="${remaining_compose_files%%:*}"
+  [ -z "$file" ] || set -- "$@" -f "$file"
+  case "$remaining_compose_files" in
+    *:*) remaining_compose_files="${remaining_compose_files#*:}" ;;
+    *) break ;;
+  esac
 done
-IFS="$old_ifs"
 set -- "$@" --env-file "$env_file"
 
 exec "$@" exec -T admin-panel /workspace/scripts/announce.sh "$message"

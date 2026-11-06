@@ -82,7 +82,14 @@ def normalize_manifest(value, remote=False):
 def _fetch(url, max_bytes, timeout=10):
     url = _url(url, "URL")
     request = urllib.request.Request(url, headers={"Accept": "application/json, application/zip", "User-Agent": "DASH-Addon/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    class AllowedRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            # Check the destination before contacting it, not after download.
+            _url(newurl, "redirected URL")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(AllowedRedirect())
+    with opener.open(request, timeout=timeout) as response:
         _url(response.geturl(), "redirected URL")
         content = response.read(max_bytes + 1)
     if len(content) > max_bytes:

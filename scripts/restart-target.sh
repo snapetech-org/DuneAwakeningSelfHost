@@ -1453,12 +1453,16 @@ fi
 map_services="$("$map_catalog_script" "${ENV_FILE:-.env}" --field services --write-cache)"
 map_profiles="$("$map_catalog_script" "${ENV_FILE:-.env}" --field all-profiles)"
 set -- docker compose
-old_ifs="$IFS"
-IFS=:
-for file in $compose_files; do
-  set -- "$@" -f "$file"
+# Split colon-delimited file paths without changing the shell's global IFS.
+remaining_compose_files="$compose_files"
+while [ -n "$remaining_compose_files" ]; do
+  file="${remaining_compose_files%%:*}"
+  [ -z "$file" ] || set -- "$@" -f "$file"
+  case "$remaining_compose_files" in
+    *:*) remaining_compose_files="${remaining_compose_files#*:}" ;;
+    *) break ;;
+  esac
 done
-IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then

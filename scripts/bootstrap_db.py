@@ -5,6 +5,7 @@ import pathlib
 import sys
 
 import psycopg2
+from psycopg2 import sql
 
 from funcomdb.config import Connection, Credentials
 from ToolsDB.settings import Settings
@@ -40,7 +41,7 @@ def create_database() -> None:
     try:
         conn.autocommit = True
         with conn.cursor() as cursor:
-            cursor.execute(f'create database "{DATABASE}" owner "{USER}"')
+            cursor.execute(sql.SQL("create database {} owner {}").format(sql.Identifier(DATABASE), sql.Identifier(USER)))
     finally:
         conn.close()
 
@@ -65,7 +66,7 @@ def main() -> int:
         with psycopg2.connect(host=HOST, port=PORT, database=DATABASE, user=USER, password=PASSWORD) as conn:
             conn.autocommit = True
             with conn.cursor() as cursor:
-                cursor.execute(f'alter database "{DATABASE}" set search_path to {SCHEMA}, public')
+                cursor.execute(sql.SQL("alter database {} set search_path to {}, public").format(sql.Identifier(DATABASE), sql.Identifier(SCHEMA)))
         return 0
 
     settings = Settings(
@@ -85,7 +86,7 @@ def main() -> int:
     with psycopg2.connect(host=HOST, port=PORT, database=DATABASE, user=USER, password=PASSWORD) as conn:
         conn.autocommit = True
         with conn.cursor() as cursor:
-            cursor.execute(f'alter database "{DATABASE}" set search_path to {SCHEMA}, public')
+            cursor.execute(sql.SQL("alter database {} set search_path to {}, public").format(sql.Identifier(DATABASE), sql.Identifier(SCHEMA)))
 
     log.info("Database bootstrap complete")
     return 0

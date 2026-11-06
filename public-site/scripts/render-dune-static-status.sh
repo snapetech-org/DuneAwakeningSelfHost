@@ -372,6 +372,7 @@ if scheduled_maintenance:
         f"<strong>Status</strong> {html.escape(status_label)}<br>"
         f"<strong>Target</strong> {html.escape(str(job.get('targetLabel') or job.get('target') or 'restart'))}<br>"
         f"<strong>Backup</strong> {html.escape(backup_state)} before restart<br>"
+        f"{event_detail}"
         f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
         f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}"
     )

@@ -400,7 +400,8 @@ class ProxyServer(ThreadingMixIn, UnixStreamServer):
         except FileNotFoundError:
             pass
         super().__init__(socket_path, ProxyHandler)
-        os.chmod(socket_path, 0o666)
+        # The root Admin consumer shares this volume; other UIDs need no access.
+        os.chmod(socket_path, 0o600)
 
     def process_request(self, request, client_address):
         self._request_slots.acquire()

@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from http_url import require_http_url
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -227,7 +228,7 @@ class WebSocket:
         headers, self.buffer = response.split(b"\r\n\r\n", 1)
         lines = headers.decode("iso-8859-1").split("\r\n")
         response_headers = {key.lower(): value.strip() for key, value in (line.split(":", 1) for line in lines[1:] if ":" in line)}
-        expected = base64.b64encode(hashlib.sha1((key + WS_GUID).encode("ascii")).digest()).decode("ascii")
+        expected = base64.b64encode(hashlib.sha1((key + WS_GUID).encode("ascii"), usedforsecurity=False).digest()).decode("ascii")
         if " 101 " not in f" {lines[0]} " or response_headers.get("sec-websocket-accept") != expected:
             self.close()
             raise ConnectionError("Discord Gateway WebSocket upgrade failed")
@@ -294,6 +295,7 @@ def http_json(url, method="GET", token=None, data=None, timeout=5, headers=None)
     request_headers.update(headers or {})
     request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
     try:
+        require_http_url(request.full_url)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read(1024 * 1024)
             return json.loads(raw) if raw else {}

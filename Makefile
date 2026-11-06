@@ -1230,6 +1230,12 @@ test-host-service-control:
 
 .PHONY: test-backup-verification-view
 validate: test-backup-verification-view
+
+.PHONY: test-security-boundaries
+test-security-boundaries:
+	python3 scripts/test-security-boundaries.py
+
+validate: test-security-boundaries
 test-backup-verification-view:
 	python3 scripts/test-backup-verification-view.py
 
