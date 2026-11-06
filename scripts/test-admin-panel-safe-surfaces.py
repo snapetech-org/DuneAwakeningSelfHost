@@ -5816,6 +5816,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             store.return_value.prometheus.return_value = "dash_deployment_assurance_latest_ready 1\n"
             self.assertIn("dash_deployment_assurance_latest_ready 1\n", panel.deferred_change_intelligence_metrics())
 
+    def test_deferred_metrics_verify_small_readiness_event_without_timeline_cache(self):
+        panel = self.panel
+        proof = {"currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}
+        with mock.patch.object(panel, "change_intelligence_verified_cache", return_value=None), mock.patch.object(panel, "CHANGE_INTELLIGENCE_ENABLED", True), mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", False), mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.certification_status.return_value = proof
+            metrics = panel.deferred_change_intelligence_metrics()
+            self.assertIn("dash_incident_readiness_certification_ready 1\n", metrics)
+            self.assertIn("dash_change_intelligence_collector_up 0\n", metrics)
+            store.return_value.status.assert_not_called()
+            store.return_value.certification_status.side_effect = ValueError("invalid receipt HMAC")
+            self.assertIn("dash_incident_readiness_certification_ready 0\n", panel.deferred_change_intelligence_metrics())
+
     def test_recorded_change_invalidates_verified_status_and_metric_document(self):
         panel = self.panel
         original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)

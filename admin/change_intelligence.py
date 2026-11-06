@@ -785,6 +785,25 @@ class Store:
         event["currentReady"] = bool(event.get("ok") and event["receiptVerification"].get("ok") and policy_current)
         return event
 
+    def certification_status(self):
+        """Verify the latest readiness event, without asserting timeline integrity.
+
+        Deployment still requires the independent complete-ledger integrity gate.
+        This bounded receipt read keeps metrics independent of timeline writes.
+        """
+        connection = self.connect(readonly=True)
+        try:
+            row = connection.execute(
+                "select * from events where action='incident-readiness-certification' order by occurred_at desc,sequence desc limit 1"
+            ).fetchone()
+            if row is None:
+                return None
+            if not hmac.compare_digest(self._sign(self._document(row)), row["signature"]):
+                raise ValueError("readiness certification event HMAC is invalid")
+            return self._certification_public(row)
+        finally:
+            connection.close()
+
     def _correlate_connection(self, connection, key):
         incident = connection.execute("select * from events where incident_key=? and kind='incident-open' order by occurred_at desc limit 1", (str(key),)).fetchone()
         if not incident:

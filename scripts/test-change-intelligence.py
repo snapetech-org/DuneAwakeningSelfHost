@@ -281,6 +281,8 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertTrue(status["readinessCertification"]["receiptVerification"]["ok"])
         self.assertTrue(status["readinessCertification"]["policyCurrent"])
         self.assertTrue(status["readinessCertification"]["currentReady"])
+        with mock.patch.object(self.store, "_verify_connection", side_effect=AssertionError("receipt metrics must not walk retained history")):
+            self.assertEqual(status["readinessCertification"], self.store.certification_status())
         capsule = self.store.capsule("slo:certified")
         self.assertEqual(event["id"], capsule["readinessCertification"]["id"])
         signed = self.store.signed_capsule("slo:certified", at=1300)
@@ -298,6 +300,12 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertFalse(stale["policyCurrent"])
         self.assertFalse(stale["currentReady"])
         self.assertIn("dash_incident_readiness_certification_ready 0", self.store.prometheus())
+        self.assertFalse(self.store.certification_status()["currentReady"])
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("drop trigger change_events_no_update")
+            connection.execute("update events set signature=? where id=?", ("0" * 64, event["id"]))
+        with self.assertRaisesRegex(ValueError, "event HMAC"):
+            self.store.certification_status()
 
     def test_signed_capsule_uses_one_snapshot_when_writer_appends_mid_export(self):
         self.record("settings-write", 1000, method="POST")

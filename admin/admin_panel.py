@@ -7843,6 +7843,11 @@ def retained_metrics_should_defer():
 def deferred_change_intelligence_metrics():
     status = change_intelligence_verified_cache()
     certification = (status or {}).get("readinessCertification") or {}
+    if status is None and CHANGE_INTELLIGENCE_ENABLED:
+        try:
+            certification = change_intelligence_store().certification_status() or {}
+        except Exception:
+            certification = {}
     ready = bool(certification.get("currentReady") and certification.get("policyCurrent")
                  and (certification.get("receiptVerification") or {}).get("ok"))
     return (
