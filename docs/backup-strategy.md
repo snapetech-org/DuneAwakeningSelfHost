@@ -117,7 +117,12 @@ complete stopped-world recovery path.
 - A paired `change-approvals.sqlite3` and `change-approvals.key` snapshot when
   two-person approval state has been initialized. A partial pair fails backup
   creation and verification.
-- `operator-evidence.tgz` when portable signed evidence exists. Both verifiers
+- `operator-evidence.tgz` when portable signed evidence exists. Collection pins
+  the complete bounded selection with open file handles before archiving, so
+  concurrent retention cannot remove a selected inode from the backup. A name
+  disappearing during acquisition retries the entire selection up to five
+  times; it never silently skips a missing capsule or publishes a partial
+  archive. Both verifiers
   confine and bound every member, dispatch by schema, recompute incident-plan
   and drill/certification digests or deployment manifest/continuity/health
   semantics, or rederive exact game-update candidate/check/verdict/expiry

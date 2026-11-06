@@ -611,30 +611,7 @@ if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
 fi
 
 if [[ "$operator_evidence_count" -gt 0 ]]; then
-  python3 - "$operator_evidence_dir" "${backup_dir}/operator-evidence.tgz" <<'PY'
-import pathlib
-import re
-import tarfile
-import sys
-
-source = pathlib.Path(sys.argv[1])
-target = pathlib.Path(sys.argv[2])
-files = sorted(path for path in source.glob("*.signed.json") if path.is_file() and not path.is_symlink())
-if not 1 <= len(files) <= 1000:
-    raise SystemExit("operator evidence backup requires 1..1000 regular signed capsules")
-total = 0
-with tarfile.open(target, "w:gz") as archive:
-    for path in files:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.signed\.json", path.name):
-            raise SystemExit(f"operator evidence capsule has unsafe backup name: {path.name}")
-        size = path.stat().st_size
-        if not 1 <= size <= 10 * 1024 * 1024:
-            raise SystemExit(f"operator evidence capsule has invalid size: {path}")
-        total += size
-        if total > 100 * 1024 * 1024:
-            raise SystemExit("operator evidence capsules exceed the 100 MiB backup bound")
-        archive.add(path, arcname=f"operator-evidence/{path.name}", recursive=False)
-PY
+  python3 scripts/snapshot_operator_evidence.py "$operator_evidence_dir" "${backup_dir}/operator-evidence.tgz"
   chmod 600 "${backup_dir}/operator-evidence.tgz"
 fi
 
