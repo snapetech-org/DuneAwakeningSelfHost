@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+import datetime
 import io
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -64,6 +67,8 @@ class FakeDocker:
         text = " ".join(argv)
         if "rabbitmq-diagnostics" in text:
             return (0, "Ping succeeded\n") if self.ping else (1, "not ready\n")
+        if argv[:2] == ["/bin/sh", "-c"]:
+            return 0, "1 3\n" if argv[4] == "messages" else "1\n"
         if " list_vhosts " in f" {text} ":
             return 0, "/\n"
         if " list_users " in f" {text} ":
@@ -90,9 +95,10 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
-        self.backup = self.root / "backups" / "20260717T040000Z"
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.backup = self.root / "backups" / stamp
         self.backup.mkdir(parents=True)
-        (self.backup / "manifest.txt").write_text("created_utc=20260717T040000Z\n", encoding="utf-8")
+        (self.backup / "manifest.txt").write_text(f"created_utc={stamp}\n", encoding="utf-8")
         archive(self.backup / "config.tgz", {
             "config/rabbitmq-enabled-plugins": "[rabbitmq_management].\n",
             "config/rabbitmq-admin.conf": "auth_backends.1 = internal\n",
@@ -144,6 +150,38 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "beneath workspace/backups"):
             self.run_drill(receipt_root=outside)
         self.assertFalse(outside.exists())
+
+    def test_directory_touch_cannot_select_an_older_backup(self):
+        old = self.root / "backups" / "20200101T000000Z"
+        shutil.copytree(self.backup, old)
+        (old / "manifest.txt").write_text("created_utc=20200101T000000Z\n")
+        os.utime(old, (2000000000, 2000000000))
+        self.assertEqual(self.backup, drill.select_backup_set(self.root))
+        self.assertLess(drill.backup_created_epoch(old), 1600000000)
+
+    def test_fresh_file_copy_cannot_refresh_old_manifest_age(self):
+        (self.backup / "manifest.txt").write_text("created_utc=20200101T000000Z\n")
+        self.assertLess(drill.backup_created_epoch(self.backup), 1600000000)
+
+    def test_old_layer_limits_backup_freshness(self):
+        os.utime(self.backup / "rabbitmq-game.tgz", (1000000000, 1000000000))
+        self.assertEqual(1000000000, drill.backup_created_epoch(self.backup))
+
+    def test_large_queue_inventory_is_counted_inside_the_container(self):
+        executable = self.root / "rabbitmqctl"
+        executable.write_text("#!/bin/sh\nawk 'BEGIN { for(i=0;i<5000;i++) print 2 }'\n")
+        executable.chmod(0o700)
+        output = subprocess.check_output(
+            ["/bin/sh", "-c", drill.COUNT_TOPOLOGY_SCRIPT, "fixture", "messages", "list_queues"],
+            env={**os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"]}, text=True)
+        self.assertEqual("5000 10000\n", output)
+
+    def test_invalid_count_output_fails_closed(self):
+        for output in ["unexpected table\n", "-1 3\n", "1 2\n3 4\n"]:
+            docker = FakeDocker()
+            docker.exec = lambda *args, **kwargs: (0, output)
+            with self.subTest(output=output), self.assertRaises(drill.RabbitMQRestoreDrillError):
+                drill._topology_count(docker, "fixture", ["list_queues"], "queues", messages=True)
 
     def test_safe_extraction_rejects_traversal_links_and_bounds(self):
         malicious = self.root / "traversal.tgz"
@@ -207,7 +245,11 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
             readiness_commands,
         )
         user_commands = [command for command in docker.commands if "list_users" in command]
-        self.assertEqual([["rabbitmqctl", "-q", "list_users"]] * 2, user_commands)
+        self.assertEqual(2, len(user_commands))
+        for command in user_commands:
+            self.assertEqual("rows", command[4])
+            self.assertEqual(["list_users"], command[5:])
+            self.assertIn("--no-table-headers", command[2])
         for name in ("admin", "game"):
             row = result["brokers"][name]
             self.assertTrue(row["isolation"]["verified"])
