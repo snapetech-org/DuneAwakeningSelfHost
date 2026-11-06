@@ -135,7 +135,7 @@ def approve_configuration(root, env_file, state, maps, hostname):
     command = ["docker", "compose", "--project-name", project, "--project-directory", str(root)]
     for name in files:
         command += ["-f", str((root / name).resolve())]
-    rendered = json.loads(run(command + ["--env-file", str(env_file), "config", "--format", "json"]))
+    rendered = json.loads(run(command + ["--profile", "*", "--env-file", str(env_file), "config", "--format", "json"]))
     allowed = set(maps) | STATEFUL | CONTROL
     identifiers = run(["docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + project]).split()
     records = {}
@@ -152,6 +152,8 @@ def approve_configuration(root, env_file, state, maps, hostname):
             records[parts[3]] = {"containerId": parts[0], "imageId": parts[1]}
     if not (STATEFUL | CONTROL) <= set(records):
         raise Blocked("host-control-required-services-missing")
+    if not set(records) <= set(rendered.get("services") or {}):
+        raise Blocked("host-control-approved-service-spec-missing")
     compose = json.dumps(rendered, sort_keys=True).encode() + b"\n"
     if env_file.read_bytes() != raw:
         raise Blocked("host-environment-changed-during-approval")

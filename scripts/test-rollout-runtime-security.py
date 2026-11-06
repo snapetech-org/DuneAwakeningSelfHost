@@ -3,6 +3,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -42,6 +43,22 @@ class Fake:
 
 
 class RolloutTests(unittest.TestCase):
+    def test_missing_profile_spec_blocks_before_backup_or_lifecycle(self):
+        runtime = object.__new__(CLI.Native)
+        runtime.admission = mock.Mock()
+        runtime.service = "deep-desert-pvp"
+        runtime.qualification = mock.Mock(return_value={"vendorImageId": "sha256:" + "a"*64, "imageId": "sha256:" + "b"*64})
+        runtime.inspect = mock.Mock(return_value={"Image": "sha256:" + "a"*64, "State": {"Running": True}})
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "compose.json").write_text('{"services":{}}')
+            runtime.policy = {"composeFile": "compose.json"}
+            runtime.admission.policy_path = root / "policy.json"
+            with self.assertRaisesRegex(CLI.control.Blocked, "approved-game-compose-spec-unavailable"):
+                runtime.preflight()
+        runtime.admission.backup.assert_not_called()
+        runtime.admission.readiness.assert_not_called()
+
     def test_readonly_and_already_current_never_recreate(self):
         for runtime, execute in ((Fake(), False), (Fake(current=True), True)):
             self.assertFalse(CLI.rollout(runtime, execute)['changed'])

@@ -124,7 +124,9 @@ class Native:
             raise control.Blocked('unexpected-existing-game-image')
         self.running = bool(self.original['State']['Running'])
         self.compose = json.loads((self.admission.policy_path.parent / self.policy['composeFile']).read_text())
-        spec = self.compose['services'][self.service]
+        spec = (self.compose.get('services') or {}).get(self.service)
+        if not isinstance(spec, dict) or not spec:
+            raise control.Blocked('approved-game-compose-spec-unavailable')
         if spec['image'] != self.approval['image']:
             raise control.Blocked('approved-compose-runtime-mismatch')
         partitions = [re.fullmatch(r'-PartitionIndex=([0-9]+)', str(value)) for value in spec.get('command', [])]

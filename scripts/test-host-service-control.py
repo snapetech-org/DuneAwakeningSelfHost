@@ -69,6 +69,41 @@ class GuardTests(unittest.TestCase):
                 self.assertEqual(2, run.call_count)
                 self.assertIn('--dry-run', run.call_args.args[0])
 
+    def test_approval_renders_disabled_profiles_without_expanding_authority(self):
+        services = sorted(CONTROL.STATEFUL | CONTROL.CONTROL | {"deep-desert-pvp"})
+        identifiers = {f"{i+1:064x}": name for i, name in enumerate(services)}
+        rendered = {"services": {name: {"image": "fixture"} for name in services}}
+        rendered["services"]["deep-desert-pvp"]["profiles"] = ["disabled-deep-desert-pvp"]
+        rendered["services"]["outside-authority"] = {"image": "fixture"}
+        commands = []
+        def run(command, **kwargs):
+            commands.append(command)
+            if command[0].endswith("compose-files.sh"):
+                output = "compose.yaml"
+            elif "config" in command:
+                output = json.dumps(rendered)
+            elif "ps" in command:
+                output = "\n".join(identifiers)
+            elif "inspect" in command:
+                key = command[-1]
+                output = f"{key}|sha256:{key}|fixture|{identifiers[key]}"
+            else:
+                raise AssertionError(command)
+            return mock.Mock(returncode=0, stdout=output)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); env = root / ".env"
+            env.write_text("COMPOSE_PROJECT_NAME=fixture\n")
+            state = root / "state"
+            with mock.patch.object(CONTROL.subprocess, "run", side_effect=run):
+                CONTROL.approve_configuration(root, env, state, {"deep-desert-pvp"}, "approved")
+            policy = json.loads((state / "approved-control.json").read_text())
+            self.assertEqual(set(services), set(policy["services"]))
+            self.assertTrue(any("--profile" in c and "*" in c and "config" in c for c in commands))
+            self.assertIn("deep-desert-pvp", json.loads((state / "approved-compose.json").read_text())["services"])
+            rendered["services"].pop("deep-desert-pvp")
+            with mock.patch.object(CONTROL.subprocess, "run", side_effect=run), self.assertRaisesRegex(CONTROL.Blocked, "approved-service-spec-missing"):
+                CONTROL.approve_configuration(root, env, state, {"deep-desert-pvp"}, "approved")
+
     def test_exact_allowlist_rejects_untrusted_fields_and_values(self):
         valid = {'service': 'postgres', 'action': 'restart', 'jobId': 'a' * 32}
         self.assertEqual(CONTROL.validate_request(valid, {'arrakeen'}), valid)
