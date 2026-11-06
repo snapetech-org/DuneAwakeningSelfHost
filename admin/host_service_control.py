@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import pathlib
+import pwd
 import re
 import socket
 import subprocess
@@ -124,6 +125,8 @@ def approve_configuration(root, env_file, state, maps, hostname):
     if not IDENTIFIER.fullmatch(project):
         raise Blocked("host-project-invalid")
     def run(command):
+        if os.geteuid() == 0 and owner.st_uid != 0:
+            command = ["runuser", "-u", pwd.getpwuid(owner.st_uid).pw_name, "--", *command]
         result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=120, check=False)
         if result.returncode:
             raise Blocked("host-control-approval-check-failed")
