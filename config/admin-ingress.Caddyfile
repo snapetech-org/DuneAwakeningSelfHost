@@ -7,7 +7,7 @@
         timeouts {
             read_body 30s
             read_header 10s
-            write 5m
+            write 65m
             idle 30s
         }
     }
@@ -36,6 +36,20 @@
         X-Permitted-Cross-Domain-Policies "none"
     }
 
+    # Full retained-history verification can use the client's bounded 60-minute
+    # maximum. Keep ordinary routes on their existing five-minute upstream wait.
+    @verification {
+        method GET POST
+        path /api/ops/deployment-assurance /api/ops/credential-lifecycle /api/ops/desired-state /api/ops/change-intelligence /api/ops/change-intelligence/certify /api/ops/update-readiness /api/ops/backups/verify
+    }
+    reverse_proxy @verification admin-panel:8080 {
+        header_down -Server
+        header_down -Via
+        transport http {
+            dial_timeout 3s
+            response_header_timeout 65m
+        }
+    }
     reverse_proxy admin-panel:8080 {
         header_down -Server
         header_down -Via

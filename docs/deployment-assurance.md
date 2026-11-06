@@ -183,6 +183,12 @@ exact manifest digest, commit, and reason before adopting a durable window.
 Shorter fixed waits previously abandoned a Desired State seal while its retained
 history checks were still running. The shared bound prevents that premature
 failure without accepting an incomplete seal or certification.
+The private Admin ingress permits a 65-minute response window on the named
+verification endpoints, covering the client's maximum one-hour budget with
+transport margin. Ordinary routes retain a five-minute upstream wait. Request
+header/body read limits, idle timeout, body-size limit, allowed methods, and
+application authorization remain enforced. The server write deadline also
+allows the longer responses; increasing only the client's timeout is insufficient.
 Older status responses omit the manifest digest. The client then reads only
 public window metadata through the running Admin verifier, which authenticates
 the existing record with its configured HMAC key. Keys and signatures stay in
