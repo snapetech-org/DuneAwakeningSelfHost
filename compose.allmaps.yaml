@@ -45,7 +45,7 @@ x-game-server-env: &game-server-env
   DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
 
 x-game-server-base: &game-server-base
-  image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
+  image: ${DUNE_GAME_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}}
   dns:
     - 1.1.1.1
     - 8.8.8.8
