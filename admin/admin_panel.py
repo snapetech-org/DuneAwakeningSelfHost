@@ -6676,7 +6676,8 @@ def update_readiness_snapshot(game=None, force=False):
     except Exception as exc:
         desired = {"state": "error", "error": str(exc)[:1000]}
     try:
-        change = change_intelligence_public_status()
+        # Certification must wait for verified evidence even under load.
+        change = change_intelligence_public_status(force=force)
     except Exception as exc:
         change = {"error": str(exc)[:1000]}
     try:

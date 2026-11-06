@@ -2719,6 +2719,35 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertFalse(result["containersTouched"])
         self.assertEqual(["stage"], calls)
 
+    def test_forced_game_readiness_verifies_change_evidence_under_load(self):
+        candidate = {"imageTag": "test", "status": "current", "installedBuildId": "1", "targetBuildId": "1"}
+        change = {"integrity": {"ok": True}, "openIncidents": [], "readinessCertification": {
+            "currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}}
+        functions = {
+            "update_readiness_candidate": lambda game: (candidate, "", ["test"]),
+            "env_file_value": lambda key: "",
+            "run_workspace_command": lambda *a, **k: {"returncode": 0},
+            "update_readiness_coriolis_native": lambda: {"ok": True},
+            "latest_full_backup_set": lambda: {},
+            "_slo_restore_proof": lambda: {},
+            "_slo_rabbitmq_restore_proof": lambda: {},
+            "desired_state_public_status": lambda: {"state": "attested", "integrity": {"ok": True}},
+            "operational_slo_public_status": lambda: {"overall": "healthy", "integrity": {"ok": True}},
+            "deployment_assurance_public_status": lambda: {},
+            "query": lambda sql: [{"count": 0}],
+        }
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for name, value in functions.items():
+                stack.enter_context(mock.patch.object(self.panel, name, value))
+            stack.enter_context(mock.patch.object(self.panel.runtime_security, "configuration", return_value=None))
+            status = stack.enter_context(mock.patch.object(self.panel, "change_intelligence_public_status",
+                side_effect=lambda force=False: change if force else {"statusDeferred": True}))
+            result = self.panel.update_readiness_snapshot(game={"returncode": 0}, force=True)
+        status.assert_called_once_with(force=True)
+        self.assertTrue(result["checks"]["changeIntegrity"])
+        self.assertTrue(result["checks"]["readinessCurrent"])
+
     def test_update_host_helper_uses_confined_fixed_candidate_workflow(self):
         (self.workspace / ".env").write_text("DUNE_STEAM_SERVER_DIR=/srv/dune-steam\n", encoding="utf-8")
         calls = []
