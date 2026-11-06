@@ -22,7 +22,32 @@ def load_announcer_with_env(env):
     return module
 
 
+def fake_container_discovery(command, **kwargs):
+    if command[1] == "ps":
+        output = "postgres-fixture\n"
+    elif command[1] == "inspect":
+        output = "postgres\n"
+    else:
+        raise AssertionError(f"unexpected container operation: {command[1]}")
+    return player_presence_announcer.subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+
 class DatabaseConfigurationTests(unittest.TestCase):
+    def test_database_discovery_rejects_missing_or_ambiguous_containers(self):
+        for output in ("", "one\ntwo\n"):
+            result = player_presence_announcer.subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+            with self.subTest(output=output), \
+                 unittest.mock.patch.object(player_presence_announcer.subprocess, "run", return_value=result) as discovery:
+                with self.assertRaisesRegex(RuntimeError, "expected one running PostgreSQL container"):
+                    player_presence_announcer.compose_cmd("exec", "-T", "postgres", "psql")
+                self.assertEqual(discovery.call_count, 1)
+
+    def test_database_commands_refuse_other_services_without_discovery(self):
+        with unittest.mock.patch.object(player_presence_announcer.subprocess, "run") as discovery:
+            with self.assertRaisesRegex(ValueError, "postgres service"):
+                player_presence_announcer.compose_cmd("exec", "-T", "gateway", "sh")
+            discovery.assert_not_called()
+
     def test_database_name_comes_from_environment(self):
         module = load_announcer_with_env({
             "DUNE_DB_NAME": "dune_sb_current",
@@ -58,7 +83,8 @@ class DatabaseConfigurationTests(unittest.TestCase):
 
             return Result()
 
-        with unittest.mock.patch.object(module, "run", fake_run):
+        with unittest.mock.patch.object(module, "run", fake_run), \
+             unittest.mock.patch.object(module.subprocess, "run", side_effect=fake_container_discovery):
             self.assertEqual(module.online_players(), {})
 
         db_arg = captured["command"].index("-d") + 1
@@ -163,7 +189,8 @@ class BaseRecoveryReminderTests(unittest.TestCase):
             return Result()
 
         config = {"account_id": 5247, "backup_id": 127, "totem_id": 22323, "message": "recover"}
-        with unittest.mock.patch.object(module, "run", fake_run):
+        with unittest.mock.patch.object(module, "run", fake_run), \
+             unittest.mock.patch.object(module.subprocess, "run", side_effect=fake_container_discovery):
             status = module.base_recovery_reminder_status(config)
 
         self.assertTrue(status["ok"])
@@ -255,7 +282,8 @@ class VehicleRecoveryReminderTests(unittest.TestCase):
             return Result()
 
         config = {"accountId": 5247, "vehicleIds": [22279], "message": "recover"}
-        with unittest.mock.patch.object(module, "run", fake_run):
+        with unittest.mock.patch.object(module, "run", fake_run), \
+             unittest.mock.patch.object(module.subprocess, "run", side_effect=fake_container_discovery):
             status = module.vehicle_recovery_reminder_status(config)
         self.assertTrue(status["ok"])
         self.assertFalse(status["restored"])
