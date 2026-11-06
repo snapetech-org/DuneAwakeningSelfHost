@@ -67,7 +67,7 @@ for support in \
   docs/ecosystem-feature-parity-audit.md \
   admin/feature_readiness_history.py admin/maintenance_planner.py admin/maintenance_outcomes.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
   admin/update_readiness.py admin/runtime_security.py admin/host_service_control.py scripts/deployment-assurance.py \
-  scripts/dune_restart_api.py scripts/install-dune-restart-api.sh scripts/test-dune-restart-api.py scripts/test-host-service-control.py \
+  scripts/dune_restart_api.py scripts/install-dune-restart-api.sh scripts/test-dune-restart-api.py scripts/test-host-service-control.py scripts/rollout-runtime-security.py scripts/test-rollout-runtime-security.py \
   config/systemd/dune-restart-api.service config/systemd/dune-restart-api.socket \
   scripts/deploy-admin-panel.sh scripts/check-admin-ingress.sh scripts/test-cosmetics-admin.py scripts/test-restore-drill.py scripts/test-operational-slo.py scripts/test-capacity-intelligence.py scripts/test-desired-state.py scripts/test-change-intelligence.py scripts/test-deployment-assurance.py scripts/test-admin-panel-safe-surfaces.py scripts/test-docker-api-proxy.py scripts/test-deploy-admin-panel.py \
   scripts/backup_verification_view.py scripts/test-backup-verification-view.py scripts/test-compose-file-protocol.py scripts/assured-control-plane-deploy.sh scripts/lib/snape-curl-auth.sh scripts/secret_env.py scripts/backup-state.sh scripts/restore-state.sh scripts/restore-alert-inbox.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \

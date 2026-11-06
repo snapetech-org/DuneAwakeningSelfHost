@@ -19,6 +19,7 @@ run_admin_tests() {
     python3 scripts/test-deploy-admin-panel.py
     python3 scripts/test-dune-restart-api.py
     python3 scripts/test-host-service-control.py
+    python3 scripts/test-rollout-runtime-security.py
     python3 scripts/test-backup-verification-view.py
     python3 scripts/test-compose-file-protocol.py
   )

@@ -68,3 +68,34 @@ runtime-patch settings unchanged. Roll one empty worker first, verify health and
 loaded build, then proceed through the remaining empty workers. Preserve the
 old image, configuration, and verified state backup for rollback. An approval
 alone never starts or restarts a worker.
+
+## Native operator canary
+
+After enabling and approving the runtime in the private environment, run a new
+assured control-plane deployment so Admin collects the same immutable candidate.
+Certify game-update readiness for that candidate before touching a worker.
+Create `/var/lib/dune-runtime-rollout` as a mode-0700 directory owned by the
+configuration owner, outside Admin's writable mounts.
+
+The operator-only CLI defaults to admission checks without a lifecycle action:
+
+```sh
+python3 scripts/rollout-runtime-security.py --service deep-desert \
+  --reason 'Qualify the approved runtime on one empty worker'
+```
+
+Add `--execute` for the reviewed canary. It requires the current host-approved
+rendered configuration, exact runtime-bound signed readiness, four zero current
+and recent player counts, unchanged environment and approval, and loaded image
+identities. It holds the shared maintenance lock, creates and verifies a fresh
+backup, repeats admission, and recreates only the selected approved game worker
+without pulling an image or touching dependencies. A live worker must publish
+its native ready log and active/alive farm registration, then pass native
+post-start hooks and a second health check. An inactive worker stays inactive.
+
+On failure, image-only rollback repeats player and identity checks and preserves
+state. Unknown players or an unexpected container block rollback for operator
+review; the CLI never restores a live database automatically. Recreated IDs are
+reapproved through the native existing-container recovery policy. Each attempt
+retains a private HMAC-signed job record. No HTTP route gains image-promotion
+or approval authority. Stop after a failed canary and retain its evidence.

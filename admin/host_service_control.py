@@ -331,7 +331,7 @@ class Admission:
         if patch.is_file():
             self.run([str(patch), "--local", "--dry-run"], timeout=180, env=environment)
 
-    def readiness(self):
+    def readiness(self, *, return_receipt=False):
         configured = dict(self.values)
         if configured.get("DUNE_ADMIN_TOKEN_FILE"):
             configured["DUNE_ADMIN_TOKEN_FILE"] = str(self.host_path(configured["DUNE_ADMIN_TOKEN_FILE"], ""))
@@ -371,7 +371,7 @@ class Admission:
         assurance = (evaluation.get("details") or {}).get("deploymentAssurance") or {}
         if not receipt.get("sourceCommit") or receipt.get("sourceCommit") != assurance.get("commit"):
             raise Blocked("readiness-source-changed")
-        return receipt.get("id")
+        return receipt if return_receipt else receipt.get("id")
 
     def host_path(self, configured, fallback):
         path = pathlib.Path(configured or fallback)
