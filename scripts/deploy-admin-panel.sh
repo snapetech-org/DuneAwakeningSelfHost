@@ -206,6 +206,31 @@ if [[ "$affinity_enabled" == "true" && -x "$script_dir/cpu-affinity.sh" ]]; then
     --confirm "APPLY DUNE CPU AFFINITY" --persist
 fi
 
-./scripts/check-admin-ingress.sh "$env_file"
+
+wait_for_admin_ingress() {
+  local timeout="${DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS:-90}" deadline remaining consecutive=0
+  [[ "$timeout" =~ ^[0-9]{1,3}$ ]] && (( 10#$timeout >= 30 && 10#$timeout <= 300 )) || {
+    printf 'DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS must be 30..300 seconds\n' >&2
+    return 1
+  }
+  command -v timeout >/dev/null || { printf 'timeout is required for bounded ingress readiness\n' >&2; return 1; }
+  deadline=$((SECONDS + 10#$timeout))
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    if timeout --kill-after=2 "${remaining}s" "$script_dir/check-admin-ingress.sh" "$env_file"; then
+      (( SECONDS <= deadline )) || break
+      consecutive=$((consecutive + 1))
+      printf 'admin ingress readiness: %s/2 consecutive healthy checks\n' "$consecutive"
+      (( consecutive < 2 )) || return 0
+    else
+      consecutive=0
+    fi
+    sleep 3
+  done
+  printf 'admin ingress did not reach two consecutive healthy checks within %ss\n' "$timeout" >&2
+  return 1
+}
+
+wait_for_admin_ingress
 repair_running_map_runtime_patches
 printf 'OK: deployed admin-panel using %s\n' "$env_file"

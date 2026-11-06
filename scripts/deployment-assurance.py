@@ -58,6 +58,7 @@ SUPPORT_FILES = {
     "admin/runtime_security.py",
     "scripts/deployment-assurance.py",
     "scripts/deploy-admin-panel.sh",
+    "scripts/check-admin-ingress.sh",
     "scripts/test-cosmetics-admin.py",
     "scripts/test-restore-drill.py",
     "scripts/test-operational-slo.py",

@@ -158,7 +158,12 @@ The push helper first runs the complete native Admin test suite in the reviewed
 checkout through `scripts/deploy-admin-panel.sh --test-only`. A failed test
 prevents staging and production mutation. The deployment helper and the native
 test files are manifest-bound so production never runs stale tests against a
-newer Admin entrypoint. Production repeats its normal deployment checks.
+newer Admin entrypoint. Production repeats its normal deployment checks. Ingress readiness requires two
+consecutive successful native checks within a bounded startup window (90
+seconds by default; `DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS` permits 30–300).
+Each check still requires a 401 response from unauthenticated detailed status
+and successful direct/LAN health probes. This accommodates initial retained-
+history verification without accepting a failed or unavailable auth response.
 
 The helper transfers the exact manifest files, including the assurance runner
 and backup-verifier closure required to operate from staging. Every executable

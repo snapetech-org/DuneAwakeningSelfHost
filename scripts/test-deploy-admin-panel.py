@@ -13,6 +13,42 @@ ADMIN = (ROOT / "admin" / "admin_panel.py").read_text(encoding="utf-8")
 
 
 class DeployAdminPanelSafetyTests(unittest.TestCase):
+    def test_ingress_requires_consecutive_health_and_stops_at_the_deadline(self):
+        match = re.search(r'^wait_for_admin_ingress\(\) \{\n.*?^\}', DEPLOY, re.M | re.S)
+        self.assertIsNotNone(match)
+        for pattern, increment, expected_code, expected_calls in (
+            ("01011", 10, 0, 5),
+            ("000000", 40, 1, 3),
+        ):
+            with self.subTest(pattern=pattern), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                count = root / "calls"
+                check = root / "check-admin-ingress.sh"
+                check.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -e "$TEST_INGRESS_CALLS" ]] || count="$(cat "$TEST_INGRESS_CALLS")"
+printf '%s' "$((count + 1))" > "$TEST_INGRESS_CALLS"
+[[ "${TEST_INGRESS_PATTERN:count:1}" == 1 ]]
+''')
+                check.chmod(0o755)
+                script = match.group() + '''
+script_dir="$TEST_INGRESS_DIRECTORY"
+env_file=unused-fixture
+sleep() { SECONDS=$((SECONDS + TEST_CLOCK_INCREMENT)); }
+wait_for_admin_ingress
+'''
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", script],
+                    env={**os.environ, "TEST_INGRESS_DIRECTORY": str(root),
+                         "TEST_INGRESS_CALLS": str(count), "TEST_INGRESS_PATTERN": pattern,
+                         "TEST_CLOCK_INCREMENT": str(increment),
+                         "DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS": "90"},
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(expected_code, result.returncode, result.stderr)
+                self.assertEqual(expected_calls, int(count.read_text()))
+
     def test_test_only_needs_no_environment_file_or_container_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
