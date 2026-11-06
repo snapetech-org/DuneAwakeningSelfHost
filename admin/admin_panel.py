@@ -559,6 +559,7 @@ CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "
 CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "60")), 300))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
+CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK = threading.Lock()
 # Full change-intelligence metrics call Store.status(), which verifies every
 # retained event's HMAC chain. Keep that expensive operation off the request
 # path once the retained ledger exceeds this bounded size; the verified
@@ -10330,8 +10331,9 @@ def ensure_change_intelligence():
 
 def change_intelligence_record_event(event):
     result = change_intelligence_store().record(event, source="admin-audit")
-    with CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
-        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+    with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+        generation = int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0) + 1
+        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0, "generation": generation})
     with METRICS_DOCUMENT_CACHE_CONDITION:
         METRICS_DOCUMENT_CACHE.pop("change-intelligence", None)
         METRICS_DOCUMENT_CACHE_CONDITION.notify_all()
@@ -10347,18 +10349,22 @@ def change_intelligence_record_event(event):
 def change_intelligence_cached_status(force=False):
     now = time.time()
     with CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
-        cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
-        age = now - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
-        if cached is not None and not force and age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS:
-            return json.loads(json.dumps(cached))
+        with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+            generation = int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0)
+            cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
+            age = now - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
+            if cached is not None and not force and 0 <= age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS:
+                return json.loads(json.dumps(cached))
         status = change_intelligence_store().status()
-        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": time.time()})
+        with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+            if generation == int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0):
+                CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": time.time()})
         return status
 
 
 def change_intelligence_verified_cache():
     """Peek without disk work or waiting for an in-flight full verification."""
-    if not CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.acquire(blocking=False):
+    if not CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.acquire(blocking=False):
         return None
     try:
         cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
@@ -10368,7 +10374,7 @@ def change_intelligence_verified_cache():
             return json.loads(json.dumps(cached))
         return None
     finally:
-        CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.release()
+        CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.release()
 
 
 def change_intelligence_public_status(force=False):

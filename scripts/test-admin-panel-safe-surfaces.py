@@ -5807,11 +5807,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value=value, updatedAt=updated)
                 with self.subTest(reason=reason):
                     self.assertIn("dash_incident_readiness_certification_ready 0\n", panel.deferred_change_intelligence_metrics())
-            panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.acquire()
+            panel.CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.acquire()
             try:
                 self.assertIsNone(panel.change_intelligence_verified_cache())
             finally:
-                panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.release()
+                panel.CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.release()
         with mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", True), mock.patch.object(panel, "deployment_assurance_store") as store:
             store.return_value.prometheus.return_value = "dash_deployment_assurance_latest_ready 1\n"
             self.assertIn("dash_deployment_assurance_latest_ready 1\n", panel.deferred_change_intelligence_metrics())
@@ -5831,6 +5831,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             panel.change_intelligence_record_event({"action": "configuration-change"})
         self.assertIsNone(panel.change_intelligence_verified_cache())
         self.assertNotIn("change-intelligence", panel.METRICS_DOCUMENT_CACHE)
+
+    def test_recording_never_waits_for_the_full_status_verification_lock(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        with mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.record.return_value = {"id": "concurrent-change"}
+            with panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
+                thread = threading.Thread(target=panel.change_intelligence_record_event, args=({"action": "change"},))
+                thread.start()
+                thread.join(1)
+                self.assertFalse(thread.is_alive(), "audit recording waited for a full retained-ledger walk")
+            thread.join(1)
+            def verify():
+                panel.change_intelligence_record_event({"action": "change-during-verification"})
+                return {"integrity": {"ok": True}}
+            store.return_value.status.side_effect = verify
+            panel.change_intelligence_cached_status(force=True)
+            self.assertIsNone(panel.change_intelligence_verified_cache())
 
     def test_change_intelligence_verified_status_is_single_flight_cached_and_forceable(self):
         original_store = self.panel.change_intelligence_store
