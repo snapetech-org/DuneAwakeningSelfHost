@@ -3403,10 +3403,10 @@ def restart_update_preflight(job):
         return {"ok": False, "policy": policy, "error": "targeted restarts cannot change the farm build"}
     if policy == "current":
         if target == "all":
-            build_check_script = ROOT / "scripts" / "check-steam-update.sh"
+            build_check_script = ROOT / "scripts" / "check-current-steam-build.py"
             try:
                 build_check = subprocess.run(
-                    [str(build_check_script), str(ENV_FILE)],
+                    [sys.executable, str(build_check_script), str(ENV_FILE)],
                     cwd=str(ROOT), env=os.environ.copy(), text=True,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     timeout=90, check=False,

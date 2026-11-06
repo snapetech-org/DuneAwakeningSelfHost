@@ -3,6 +3,7 @@ import importlib.util
 import pathlib
 import unittest
 import tempfile
+import types
 from unittest import mock
 
 
@@ -44,6 +45,24 @@ class RestartApiValidationTests(unittest.TestCase):
     def test_accepts_a_full_fleet_request(self):
         result = API.validate_request(request(target="all", services=[]), self.maps)
         self.assertEqual(result["target"], "all")
+
+    def test_build_check_is_read_only_and_farm_scoped(self):
+            payload = request(target="all", services=[], phase="check-current-build", fastDynamicStart=False)
+            self.assertEqual(API.validate_request(payload, self.maps)["phase"], "check-current-build")
+            for overrides in ({"target": "survival", "services": ["survival"]},
+                              {"services": ["survival"]}, {"dryRun": True},
+                              {"fastDynamicStart": True}, {"action": "shutdown"}):
+                with self.subTest(overrides=overrides), self.assertRaises(API.RequestError):
+                    API.validate_request({**payload, **overrides}, self.maps)
+
+    def test_build_check_executes_only_the_host_checker_without_write_env(self):
+            payload = request(target="all", services=[], phase="check-current-build", fastDynamicStart=False)
+            with mock.patch.object(API.host_service_control, "Admission") as admission, mock.patch.object(API.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout="status: current", stderr="")) as run:
+                admission.return_value.expected_hostname = API.socket.gethostname().split(".")[0]
+                self.assertTrue(API.execute_restart(payload)["ok"])
+                admission.return_value.recover_existing.assert_not_called()
+            self.assertEqual(run.call_args.args[0], [str(API.ROOT / "scripts/check-steam-update.sh"), str(API.ENV_FILE)])
+            self.assertEqual(run.call_args.kwargs["timeout"], 90)
 
     def test_rejects_unknown_target(self):
         with self.assertRaises(API.RequestError):
