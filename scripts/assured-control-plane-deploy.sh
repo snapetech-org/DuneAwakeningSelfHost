@@ -406,18 +406,13 @@ print(f"credential lifecycle initialized: {history.get('events',0)} events; auth
 PY
 
 api_get /api/ops/desired-state "$verification_timeout" >"$work/desired.json"
-desired_state="$(python3 - "$work/desired.json" <<'PY'
-import json,sys
-d=json.load(open(sys.argv[1])); print(d.get("state", "unknown"))
-PY
-)"
-if [[ "$desired_state" != "attested" ]]; then
-  python3 - "$reason" >"$work/seal.json" <<'PY'
+# A newly started monitor may still report the previous observation as attested.
+# Always seal the reviewed manifest after applying it, before certifying readiness.
+python3 - "$reason" >"$work/seal.json" <<'PYSEAL'
 import json,sys
 print(json.dumps({"action":"seal","reason":"Assured deployment: " + sys.argv[1],"confirm":"SEAL DESIRED STATE"}))
-PY
-  curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
-fi
+PYSEAL
+curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
 
 api_get /api/ops/change-intelligence "$verification_timeout" >"$work/change.json"
 python3 - "$work/change.json" >"$work/certify.json" <<'PY'

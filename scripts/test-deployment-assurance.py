@@ -355,6 +355,8 @@ sleep() { :; }
         self.assertLess(wait_call, finish_request)
         self.assertLess(finish_request, finalize_call)
         self.assertLess(finalize_call, receipt_check)
+        self.assertNotIn('if [[ "$desired_state" != "attested" ]]', source)
+        self.assertLess(source.index('>"$work/seal-response.json"'), source.index('>"$work/certify-response.json"'))
         self.assertIn("credential lifecycle trust-state initialization failed", source)
         self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index('>"$work/desired.json"'))
         for phrase in (
