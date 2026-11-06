@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from http_url import require_http_url
 
 

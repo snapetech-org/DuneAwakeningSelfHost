@@ -1236,6 +1236,12 @@ test-security-boundaries:
 	python3 scripts/test-security-boundaries.py
 
 validate: test-security-boundaries
+
+.PHONY: test-compose-static-ips
+test-compose-static-ips:
+	python3 scripts/test-compose-static-ips.py
+
+check-compose-static-ips: test-compose-static-ips
 test-backup-verification-view:
 	python3 scripts/test-backup-verification-view.py
 

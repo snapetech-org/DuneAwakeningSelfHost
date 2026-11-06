@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import os
+import pathlib
+import sys
 import re
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from secret_env import read_secret_env
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from http_url import require_http_url
 
 

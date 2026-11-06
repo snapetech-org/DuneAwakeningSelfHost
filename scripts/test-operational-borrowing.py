@@ -222,15 +222,30 @@ class RunServerSafeTests(unittest.TestCase):
             raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
             decoded = [item.decode("utf-8") for item in raw_args]
             self.assertIn("-MultiHome=172.31.240.40", decoded)
-            self.assertIn("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=pass with spaces", decoded)
+            self.assertFalse(any("ServerLoginPassword=" in arg for arg in decoded))
             self.assertIn("/Game/Dune/Maps/Test Map", decoded)
             self.assertIn("-ExecCmds=ScheduleMTXEvent SpecializationXPBonus 60 604800,ListMTXEvents", decoded)
             self.assertNotIn("-IGWBindAddress=172.31.240.40", decoded)
 
             engine_ini = server_root / "DuneSandbox" / "Saved" / "Config" / "LinuxServer" / "Engine.ini"
             user_engine_ini = server_root / "DuneSandbox" / "Saved" / "UserSettings" / "UserEngine.ini"
-            self.assertIn('Bgd.ServerLoginPassword="pass with spaces"', engine_ini.read_text(encoding="utf-8"))
+            self.assertNotIn("ServerLoginPassword", engine_ini.read_text(encoding="utf-8"))
             self.assertIn('Bgd.ServerDisplayName="Display With Spaces"', user_engine_ini.read_text(encoding="utf-8"))
+            # Dry-run does not install secrets. Verify the explicit file-backed
+            # installer separately, without putting the password in argv.
+            secret_dir = tmp_path / "secrets"
+            secret_dir.mkdir(mode=0o700)
+            login_file = secret_dir / "dune_server_login_password"
+            login_file.write_text("pass with spaces", encoding="utf-8")
+            login_file.chmod(0o600)
+            subprocess.run([
+                "python3", str(ROOT / "scripts" / "game-runtime-secrets.py"),
+                "install-config", "--server-root", str(server_root),
+                "--secret-dir", str(secret_dir),
+            ], env={**env, "DUNE_RUNTIME_SECRETS_REQUIRED": "false"}, check=True,
+               stdout=subprocess.DEVNULL)
+            self.assertIn('Bgd.ServerLoginPassword="pass with spaces"', engine_ini.read_text(encoding="utf-8"))
+            self.assertEqual(engine_ini.stat().st_mode & 0o777, 0o600)
 
             config_link = dune_home / ".config" / "Epic" / "Unreal Engine" / "Engine" / "Config"
             self.assertTrue(config_link.is_symlink())
@@ -848,7 +863,7 @@ class OperationalReportTests(unittest.TestCase):
             env_text = env_text.replace("WORLD_UNIQUE_NAME=sh-example-dune", "WORLD_UNIQUE_NAME=sh-report-test")
             fls_key = "FLS" + "_SECRET"
             env_text = env_text.replace(f"{fls_key}=", f"{fls_key}=super-secret-token")
-            env_text = env_text.replace("DUNE_ADMIN_TOKEN=change-me-admin-token", "DUNE_ADMIN_TOKEN=admin-secret-token")
+            env_text = env_text.replace("DUNE_ADMIN_TOKEN=\n", "DUNE_ADMIN_TOKEN=admin-secret-token\n", 1)
             env_file.write_text(env_text, encoding="utf-8")
 
             result = subprocess.run(
@@ -969,8 +984,9 @@ class OperationalBundleTests(unittest.TestCase):
 class VerifyBackupTests(unittest.TestCase):
     def test_verify_backup_reports_identity_layers_without_pg_restore(self):
         with tempfile.TemporaryDirectory() as tmp:
-            backup_dir = Path(tmp)
-            bin_dir = backup_dir / "bin"
+            backup_dir = Path(tmp) / "backup"
+            backup_dir.mkdir()
+            bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
             for tool in ("bash", "tar", "gzip", "rg", "grep", "find", "python3"):
                 target = shutil.which(tool)
@@ -1109,10 +1125,10 @@ class FailoverScriptTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             files = result.stdout.strip().split(":")
-            self.assertIn("compose.fls-ipv4-hosts.yaml", files)
+            self.assertNotIn("compose.fls-ipv4-hosts.yaml", files)
             self.assertIn("compose.director-hostnet-cutover.yaml", files)
             self.assertIn("compose.director-hostnet-port.yaml", files)
-            self.assertLess(files.index("compose.fls-ipv4-hosts.yaml"), files.index("compose.director-hostnet-cutover.yaml"))
+            self.assertLess(files.index("compose.director-hostnet-cutover.yaml"), files.index("compose.director-hostnet-port.yaml"))
 
     def test_router_cutover_dry_run_rewrites_env_driven_ports(self):
         with tempfile.TemporaryDirectory() as tmp:

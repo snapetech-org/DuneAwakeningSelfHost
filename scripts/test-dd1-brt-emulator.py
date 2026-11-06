@@ -45,7 +45,7 @@ class Dd1BrtEmulatorContractTests(unittest.TestCase):
 
     def test_brt_tooling_regressions_are_in_standard_validation(self):
         source = MAKEFILE.read_text(encoding="utf-8")
-        validate_line = next(line for line in source.splitlines() if line.startswith("validate:"))
+        validate_line = " ".join(line for line in source.splitlines() if line.startswith("validate:"))
         self.assertIn("test-brt-dd-tooling", validate_line)
         self.assertIn("scripts/test-dd1-brt-emulator.py", source)
         self.assertIn("scripts/test-brt-dd-trace.py", source)
