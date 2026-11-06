@@ -78,7 +78,7 @@ PYTHON
     sudo chmod 0660 /run/dune-restart-api/restart.sock
   fi
   sudo systemctl restart dune-restart-api.service
-  python3 - "$repo_root" <<'PYTHON'
+  sudo python3 - "$repo_root" <<'PYTHON'
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 sys.path[:0] = [str(root / "admin"), str(root / "scripts")]
