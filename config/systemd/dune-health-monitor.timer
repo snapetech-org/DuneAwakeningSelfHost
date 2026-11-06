@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Dune server health and update readiness every 10 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00,10,20,30,40,50:00
+AccuracySec=1min
+Persistent=true
+Unit=dune-health-monitor.service
+
+[Install]
+WantedBy=timers.target

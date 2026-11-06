@@ -31,6 +31,21 @@ if [[ ! -f "$env_file" ]]; then
   exit 2
 fi
 
+env_file_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "$env_file" 2>/dev/null
+}
+logoff_patch_enabled="${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-$(env_file_value DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED)}"
+logoff_patch_enabled="${logoff_patch_enabled:-true}"
+
 if [[ -f "$script_dir/ensure-map-network-capacity.py" ]]; then
   python3 "$script_dir/ensure-map-network-capacity.py" "$env_file"
 fi
@@ -106,7 +121,7 @@ elif [[ -x "$script_dir/verify-rmq-auth-path.sh" ]]; then
   ENV_FILE="$env_file" "$script_dir/verify-rmq-auth-path.sh"
 fi
 
-case "${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}" in
+case "$logoff_patch_enabled" in
   1|true|yes|on|TRUE|True|YES|ON)
     if [[ -x "$script_dir/patch-logoff-timers-runtime.sh" ]]; then
       "$script_dir/patch-logoff-timers-runtime.sh" --local --dry-run

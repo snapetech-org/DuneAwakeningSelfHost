@@ -1,26 +1,10 @@
 # ng-runner-policy: private-jit-only-v1
 name: Release
 
-
-run-name: >-
-  ${{ format('action:{0}:pool:{1}:tag:{2}', inputs.action, inputs.runner_pool, inputs.release_tag) }}
 on:
-  workflow_dispatch:
-    inputs:
-      action:
-        description: Release action
-        type: choice
-        options: [release]
-        required: true
-      runner_pool:
-        description: Private ephemeral JIT runner pool
-        type: choice
-        options: [private]
-        required: true
-      release_tag:
-        description: Exact existing version tag to build and publish
-        type: string
-        required: true
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -29,21 +13,18 @@ permissions:
   artifact-metadata: write
 
 concurrency:
-  group: release-${{ inputs.release_tag || github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    if: github.repository == 'snapetech/DuneAwakeningSelfHost' && github.ref == 'refs/heads/main' && github.actor == 'snapetech' && inputs.action == 'release' && inputs.runner_pool == 'private' && inputs.release_tag != ''
+    if: github.repository == 'snapetech/DuneAwakeningSelfHost'
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-duneawakeningselfhost","ng-main-run-{0}","gha-{0}-release"]}}', github.run_id)) }}
     timeout-minutes: 90
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
-      - name: Check out the selected release tag
+      - name: Check out the tagged commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
 
       - name: Validate tag identity
@@ -51,9 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           expected="v$(tr -d '\r\n' < VERSION)"
-          test "$RELEASE_TAG" = "$expected"
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          git merge-base --is-ancestor "$RELEASE_TAG^{commit}" origin/main
+          test "$GITHUB_REF_NAME" = "$expected"
+          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
           test -z "$(git status --porcelain --untracked-files=all)"
 
       - name: Install validation and cross-build dependencies
@@ -68,7 +48,7 @@ jobs:
         run: make validate
 
       - name: Build and smoke-test release assets
-        run: scripts/build-release-assets.sh --version "$RELEASE_TAG" --ref "$(git rev-parse HEAD)"
+        run: scripts/build-release-assets.sh --version "$GITHUB_REF_NAME" --ref "$(git rev-parse HEAD)"
 
       - name: Attest release assets
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
@@ -78,4 +58,4 @@ jobs:
       - name: Publish immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/publish-github-release.sh "$RELEASE_TAG" dist/release "$GITHUB_REPOSITORY"
+        run: scripts/publish-github-release.sh "$GITHUB_REF_NAME" dist/release "$GITHUB_REPOSITORY"

@@ -21,6 +21,34 @@ The hotfix service is bounded to 90 minutes per run. Its timer waits 15 minutes
 after the service exits before polling again, so a slow or failed update does
 not cause overlapping work or an immediate retry when a long run finishes.
 
+## Independent Health Alerts
+
+`dune-health-monitor.timer` runs every 10 minutes from a calendar schedule. It
+checks the installed Steam build against the last loaded build, the Docker
+daemon, required game partitions, FLS server-browser publication, failed
+update / watchdog / safety-audit services, and whether the updater, public-IP
+monitor, safety-audit, and health timers have a next run. The hotfix updater,
+public-IP monitor, target safety audit, and map watchdog trigger an immediate check
+when systemd records a failure.
+
+Findings are emailed through the host's shared
+`/usr/local/lib/snape-mail-submit.sh` helper and
+`/etc/snape/identity-alerts.env`. The monitor sends one message per distinct
+finding set and a recovery message after they clear. Its state is stored under
+`/var/lib/dune-health-monitor`; it does not depend on DASH's alert inbox or
+Prometheus scraping. Those provide local visibility, but they do not deliver
+mail by themselves, and a Prometheus comparison against a missing metric does
+not fire.
+
+Install or refresh the monitor and its failure hooks with:
+
+```bash
+./scripts/install-dune-health-monitor.sh
+```
+
+The public-IP monitor also uses `OnUnitInactiveSec` so its oneshot timer
+schedules the next run after each check completes.
+
 Daily maintenance uses the same trust boundary. The default `certified` policy
 checks readiness before warning players and revalidates the exact staged
 candidate immediately before any disconnect or stop. When no update is staged,
@@ -510,6 +538,25 @@ Expected output includes `DRY RUN: would patch 3 target(s)` and the three target
 names. If the dry-run cannot find exactly those sites after a Funcom binary
 update, leave `DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=false` until the Ghidra
 signatures are refreshed.
+
+### Supported Building Piece Multiplier
+
+For current server builds, use
+`DUNE_BUILDING_PIECE_LIMIT_SETTINGS_ENABLED=true`,
+`DUNE_BUILDING_PIECE_LIMIT_MODE=server-settings`, and
+`DUNE_BUILDING_PIECE_LIMIT_MULTIPLIER=2.000000`. The startup wrapper writes
+`BuildingPieceLimitMultiplier` to both
+`Saved/Config/LinuxServer/ServerCustomSettings.ini` and
+`Saved/UserSettings/ServerCustomSettings.ini`. Every worker service must receive
+the three settings through its Compose environment.
+
+On 2026-11-01, production's shared environment had the correct values, but its
+base `compose.yaml` lacked those environment pass-throughs. The current source
+Compose files already included them. The production Compose copy was synced,
+then the five affected active base maps were recreated with
+`scripts/start-map-with-post-hooks.sh`; all six active maps, including the
+already-correct PvP map, were verified at multiplier `2.000000` on Steam build
+`26324834`.
 
 Prepared-for-downtime production file backup:
 

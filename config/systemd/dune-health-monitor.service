@@ -1,0 +1,28 @@
+[Unit]
+Description=Check Dune server build, availability, and operational timers
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+StateDirectory=dune-health-monitor
+StateDirectoryMode=0750
+Environment=MAIL_ENV=/etc/snape/identity-alerts.env
+Environment=MAIL_SERVICE=dune-health-monitor
+Environment=MAIL_LOG_TAG=dune-health-monitor
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/dune-health-monitor.sh /opt/DuneAwakeningSelfHost/.env
+TimeoutStartSec=5min
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/dune-health-monitor /var/lib/snape-mail
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

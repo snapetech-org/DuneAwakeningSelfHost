@@ -25,7 +25,30 @@ if [[ "$restart_target" == "all" && ( "$restart_phase" == "start" || "$restart_p
 fi
 interval="${DUNE_RESTART_POST_START_INTERVAL_SECONDS:-5}"
 seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-90}"
-logoff_patch_enabled="${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}"
+
+env_file_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "$env_file" 2>/dev/null
+}
+
+setting() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value="${!key:-}"
+  [[ -n "$value" ]] || value="$(env_file_value "$key")"
+  printf '%s' "${value:-$fallback}"
+}
+
+logoff_patch_enabled="$(setting DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED true)"
+logoff_auto_remap_enabled="$(setting DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED true)"
 landsraad_coriolis_guard_enabled="${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}"
 lan_reflection_refresh_enabled="${DUNE_LAN_REFLECTION_REFRESH_AFTER_START:-true}"
 
@@ -68,9 +91,34 @@ run_post_start_hooks() {
   if [[ -x "$script_dir/brt-dd-next-downtime.sh" ]]; then
     "$script_dir/brt-dd-next-downtime.sh" apply-pending "$env_file"
   fi
-  if [[ "$logoff_patch_enabled" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ && -x "$script_dir/patch-logoff-timers-runtime.sh" ]]; then
-    "$script_dir/patch-logoff-timers-runtime.sh" --local \
-      || printf 'warning: logoff timer runtime patch failed after restart\n' >&2
+  if [[ -x "$script_dir/patch-logoff-timers-runtime.sh" ]]; then
+    if [[ "$logoff_patch_enabled" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
+      local -a patch_env=(
+        "DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED=$logoff_patch_enabled"
+        "DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED=$logoff_auto_remap_enabled"
+      )
+      local key value
+      for key in \
+        DUNE_LOGOFF_TIMER_BUILD_ID \
+        DUNE_LOGOFF_TIMER_VALUE \
+        DUNE_LOGOFF_TIMER_VALUE_A_OFFSET \
+        DUNE_LOGOFF_TIMER_VALUE_B_OFFSET \
+        DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET \
+        DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET \
+        DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET \
+        DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET \
+        DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET \
+        DUNE_LOGOFF_TIMER_DIALOG_TRIPLE_OFFSET \
+        DUNE_LOGOFF_TIMER_DIRECT_ARRAYS \
+        DUNE_LOGOFF_TIMER_BACKEND_ONLY; do
+        value="$(setting "$key")"
+        [[ -z "$value" ]] || patch_env+=("$key=$value")
+      done
+      env "${patch_env[@]}" "$script_dir/patch-logoff-timers-runtime.sh" --local \
+        || printf 'warning: logoff timer runtime patch failed after restart\n' >&2
+    else
+      printf 'skipping logoff timer runtime patch: disabled by environment file\n'
+    fi
   fi
 }
 

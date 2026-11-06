@@ -1520,7 +1520,9 @@ if [ "$phase" = "start" ]; then
       elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
         ./scripts/verify-rmq-auth-path.sh
       fi
-      case "${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}" in
+      logoff_patch_enabled="$(env_file_value DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED "${ENV_FILE:-.env}")"
+      logoff_patch_enabled="${logoff_patch_enabled:-true}"
+      case "$logoff_patch_enabled" in
         1|true|yes|on|TRUE|True|YES|ON)
           # The generic post-start hook can run before a newly started game
           # process exists and still succeed after patching older maps. Retry
