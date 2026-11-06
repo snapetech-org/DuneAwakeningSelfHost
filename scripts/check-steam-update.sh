@@ -33,6 +33,7 @@ for arg in "$@"; do
 done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$repo_root/scripts"
 cd "$repo_root"
 
 get_env() {

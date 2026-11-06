@@ -35,6 +35,7 @@ VALID_ACTION_PHASES = {
     ("restart", "start"),
     ("restart", "restart"),
     ("restart", "stop"),
+    ("restart", "check-current-build"),
     ("shutdown", "stop"),
     ("shutdown", "shutdown"),
 }
@@ -261,6 +262,8 @@ def validate_request(payload: object, map_services: set[str]) -> dict:
     phase = payload["phase"]
     if (action, phase) not in VALID_ACTION_PHASES:
         raise RequestError(403, "restart action or phase is not allowed")
+    if phase == "check-current-build" and (target != "all" or services or payload["dryRun"] or payload["fastDynamicStart"]):
+        raise RequestError(403, "build checks require the all-farm target without services or lifecycle flags")
     if not isinstance(payload["dryRun"], bool) or not isinstance(payload["fastDynamicStart"], bool):
         raise RequestError(400, "restart flags must be booleans")
     job_id = payload["jobId"]
@@ -312,6 +315,15 @@ def execute_restart(request: dict) -> dict:
         policy = admission.require_policy()
         if not admission.expected_hostname or socket.gethostname().split(".")[0] != admission.expected_hostname:
             raise host_service_control.Blocked("host-identity-not-approved")
+        if request["phase"] == "check-current-build":
+            result = subprocess.run(
+                [str(ROOT / "scripts/check-steam-update.sh"), str(ENV_FILE)],
+                cwd=ROOT, env=restart_environment(request), capture_output=True,
+                text=True, timeout=90, check=False,
+            )
+            return {"ok": result.returncode == 0, "exitCode": result.returncode,
+                    "output": (result.stdout + result.stderr).strip()[-MAX_OUTPUT_CHARS:],
+                    "durationMs": int((time.monotonic() - started) * 1000)}
         environment = admission.approved_environment(restart_environment(request))
         services = ([*sorted(configured_map_services()), *sorted(host_service_control.CONTROL)]
                     if request["target"] == "all" else request["services"])

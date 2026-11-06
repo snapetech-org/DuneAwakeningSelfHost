@@ -133,8 +133,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         (self.workspace / ".env").write_text("", encoding="utf-8")
         # Restart phase tests still exercise the real current-build admission.
         # Their fixture represents a staged package matching the loaded build.
-        build_check = self.workspace / "scripts" / "check-steam-update.sh"
-        build_check.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        build_check = self.workspace / "scripts" / "check-current-steam-build.py"
+        build_check.write_text("raise SystemExit(0)\n", encoding="utf-8")
         build_check.chmod(0o755)
         self.panel = load_admin_panel(self.workspace)
         # Existing route tests isolate their route-specific gate. Focused tests
@@ -2234,7 +2234,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         command.chmod(0o755)
         self.panel.RESTART_COMMAND = str(command)
-        build_check = self.workspace / "scripts" / "check-steam-update.sh"
+        build_check = self.workspace / "scripts" / "check-current-steam-build.py"
         with mock.patch.object(self.panel, "run_restart_command") as restart, \
              mock.patch.object(self.panel, "soft_disconnect_online_players") as disconnect:
             for missing in (False, True):
@@ -2242,7 +2242,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                     if missing:
                         build_check.unlink()
                     else:
-                        build_check.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+                        build_check.write_text("raise SystemExit(1)\n", encoding="utf-8")
                     result = self.panel.execute_restart({
                         "id": "unverified-current-build", "execute": True,
                         "action": "restart", "target": "all", "backup": False,
@@ -2338,6 +2338,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertGreater(job["runAt"], job["createdAt"])
         self.assertEqual(captured["restart_at"], job["runAt"])
         self.assertEqual("certified", job["updatePolicy"])
+
+    def test_current_build_preflight_uses_python_host_check_and_fails_closed(self):
+        for rc in (0, 1, 2):
+            with self.subTest(returncode=rc), mock.patch.object(self.panel.subprocess, "run", return_value=types.SimpleNamespace(returncode=rc, stdout="build evidence", stderr="")) as run:
+                result = self.panel.restart_update_preflight({"target": "all", "updatePolicy": "current"})
+                self.assertEqual(result["ok"], rc == 0)
+                self.assertEqual(run.call_args.args[0], [sys.executable, str(self.workspace / "scripts/check-current-steam-build.py"), str(self.panel.ENV_FILE)])
+                self.assertFalse(result["checkSteamUpdate"])
 
     def test_restart_update_policy_is_target_safe_and_cannot_bypass_receipts(self):
         targeted = self.panel.schedule_restart({
