@@ -321,7 +321,9 @@ class Store:
 
     def _secure(self):
         self.database.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.database.parent, 0o700)
+        # Owner-only traversal is required for private signed state; 0644
+        # would remove traversal and expose directory entries to other users.
+        os.chmod(self.database.parent, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         if self.database.exists():
             os.chmod(self.database, 0o600)
         if os.geteuid() == 0 and self.owner_uid is not None:
@@ -700,7 +702,8 @@ class Store:
         self.initialize_if_needed()
         target = pathlib.Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(target.parent, 0o700)
+        # Evidence directories contain private snapshots and require owner-only traversal.
+        os.chmod(target.parent, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         source = self.connect(readonly=True)
         destination = sqlite3.connect(target)
         try:
