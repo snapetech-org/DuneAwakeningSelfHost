@@ -80,6 +80,8 @@ SUPPORT_FILES = {
     "scripts/http_url.py",
     "scripts/test-security-boundaries.py",
     "scripts/backup-state.sh",
+    "scripts/snapshot_operator_evidence.py",
+    "scripts/test-snapshot-operator-evidence.py",
     "scripts/restore-state.sh",
     "scripts/restore-alert-inbox.sh",
     "scripts/verify-backup.sh",
