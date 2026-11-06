@@ -31,6 +31,44 @@ class GuardTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_secret_env('TEST_TOKEN', environment={'TEST_TOKEN_FILE': str(secret) + '-missing', 'TEST_TOKEN': 'no-fallback'})
 
+    def test_native_secret_alias_maps_only_inside_the_approved_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            env = root / '.env'
+            env.write_text('')
+            provider = root / 'private-provider'
+            provider.mkdir()
+            key = provider / 'key'
+            key.write_text('fixture')
+            outside = root / 'outside'
+            outside.write_text('fixture')
+            (provider / 'escape').symlink_to(outside)
+            admission = CONTROL.Admission(root, env, 'approved')
+            with mock.patch.object(admission, 'require_policy', return_value={'secretDirectory': str(provider)}):
+                self.assertEqual(key, admission.host_path('/workspace-secret-files/key', ''))
+                for value in ('/workspace-secret-files/../outside', '/workspace-secret-files/escape'):
+                    with self.assertRaisesRegex(CONTROL.Blocked, 'secret-path-escape'):
+                        admission.host_path(value, '')
+            self.assertEqual(root / 'backups/evidence', admission.host_path('/workspace/backups/evidence', ''))
+
+    def test_disabled_runtime_patch_is_not_probed_after_native_network_health(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            env = root / '.env'
+            env.write_text('DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED=false\n')
+            (root / 'scripts').mkdir()
+            (root / 'scripts/patch-logoff-timers-runtime.sh').write_text('fixture')
+            admission = CONTROL.Admission(root, env, 'approved')
+            with mock.patch.object(admission, 'run') as run:
+                admission.post_start_hooks({})
+                self.assertEqual(1, run.call_count)
+                self.assertTrue(run.call_args.args[0][0].endswith('/restart-post-start-health.sh'))
+            admission.values['DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED'] = 'true'
+            with mock.patch.object(admission, 'run') as run:
+                admission.post_start_hooks({})
+                self.assertEqual(2, run.call_count)
+                self.assertIn('--dry-run', run.call_args.args[0])
+
     def test_exact_allowlist_rejects_untrusted_fields_and_values(self):
         valid = {'service': 'postgres', 'action': 'restart', 'jobId': 'a' * 32}
         self.assertEqual(CONTROL.validate_request(valid, {'arrakeen'}), valid)

@@ -34,6 +34,7 @@ class Fake:
     def gates(self): self.call('gates')
     def recreate(self): self.call('recreate')
     def verify_candidate(self): self.call('verify')
+    def prepare_network(self): self.call('network')
     def wait_healthy(self): self.call('health')
     def post_hooks(self): self.call('hooks')
     def reapprove(self): self.call('approve')
@@ -49,7 +50,7 @@ class RolloutTests(unittest.TestCase):
     def test_live_worker_checks_health_before_and_after_native_hooks(self):
         runtime = Fake()
         self.assertTrue(CLI.rollout(runtime, True)['changed'])
-        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'health', 'hooks', 'health', 'approve'])
+        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'network', 'health', 'hooks', 'health', 'approve'])
 
     def test_stopped_worker_is_replaced_without_start_or_post_start_hooks(self):
         runtime = Fake(running=False)
@@ -65,7 +66,7 @@ class RolloutTests(unittest.TestCase):
             self.assertNotIn('rollback', runtime.calls)
 
     def test_replacement_health_hook_or_approval_failure_enters_guarded_rollback(self):
-        for failure in ('recreate', 'verify', 'health', 'hooks', 'approve'):
+        for failure in ('recreate', 'verify', 'network', 'health', 'hooks', 'approve'):
             runtime = Fake(fail=failure)
             with self.subTest(failure=failure), self.assertRaises(CLI.control.Blocked):
                 CLI.rollout(runtime, True)

@@ -32,6 +32,7 @@ def rollout(runtime, execute=False):
         runtime.recreate()
         runtime.verify_candidate()
         if plan['running']:
+            runtime.prepare_network()
             runtime.wait_healthy()
             runtime.post_hooks()
             runtime.wait_healthy()
@@ -201,6 +202,13 @@ class Native:
             time.sleep(5)
         raise control.Blocked('native-game-health-timeout')
 
+    def prepare_network(self):
+        # A replacement endpoint needs bridge/reflection/neighbor setup before
+        # peers can finish the native farm-ready handshake.
+        self.admission.run([str(self.root / 'scripts/restart-post-start-health.sh')],
+                           timeout=1800, env=self.environment)
+        self.record('native-network-post-start-passed')
+
     def post_hooks(self):
         self.admission.post_start_hooks(self.environment)
         self.record('native-post-hooks-passed')
@@ -232,6 +240,7 @@ class Native:
             raise control.Blocked('image-rollback-did-not-converge')
         self.new_id = restored['Id']
         if self.running:
+            self.prepare_network()
             self.wait_healthy()
             self.post_hooks()
         self.reapprove()

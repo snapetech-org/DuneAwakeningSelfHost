@@ -328,7 +328,7 @@ class Admission:
     def post_start_hooks(self, environment):
         self.run([str(self.root / "scripts/restart-post-start-health.sh")], timeout=1800, env=environment)
         patch = self.root / "scripts/patch-logoff-timers-runtime.sh"
-        if patch.is_file():
+        if patch.is_file() and enabled(self.values.get("DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED", "true")):
             self.run([str(patch), "--local", "--dry-run"], timeout=180, env=environment)
 
     def readiness(self, *, return_receipt=False):
@@ -375,6 +375,15 @@ class Admission:
 
     def host_path(self, configured, fallback):
         path = pathlib.Path(configured or fallback)
+        if path == pathlib.Path("/workspace-secret-files") or str(path).startswith("/workspace-secret-files/"):
+            relative = path.relative_to("/workspace-secret-files")
+            if ".." in relative.parts:
+                raise Blocked("host-secret-path-escape")
+            source = pathlib.Path(self.require_policy()["secretDirectory"]).resolve(strict=True)
+            resolved = (source / relative).resolve(strict=True)
+            if not resolved.is_relative_to(source):
+                raise Blocked("host-secret-path-escape")
+            return resolved
         if str(path).startswith("/workspace/"):
             path = self.root / path.relative_to("/workspace")
         return path if path.is_absolute() else self.root / path
