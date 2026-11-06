@@ -1,5 +1,18 @@
 # Assured Change Windows
 
+Large retained ledgers keep full timeline collection deferred during Prometheus
+scrapes. Readiness still exposes the recent fully verified status from the
+bounded status cache, including the signed receipt and current policy checks.
+Missing, expired, future-dated or invalid proof reports not ready; a newly
+recorded change invalidates the status and metrics caches. The separate small
+signed deployment-receipt store remains visible while timeline metrics defer.
+
+Audit-ledger connections use a bounded 1 GiB read-only SQLite page mapping to
+avoid per-page filesystem round trips during full verification. This changes
+the read path, not the SQLite, HMAC, append-only or authenticated-head checks.
+SQLite retains its normal read fallback when mapping is unavailable. Native
+read-only qualification verified all 400,996 events in 23.6 seconds.
+
 DASH can promote a reviewed control-plane commit through one two-phase,
 fail-closed workflow. The outcome is not merely “the deploy command returned
 zero.” A successful receipt proves source provenance, map continuity, current
@@ -49,6 +62,13 @@ receipt when it can safely characterize the failure; it does not rewrite the
 outcome green. An invalid/missing manifest, private path, missing backup,
 tampered window, expired window, or unreadable required source fails before
 finalization.
+
+For large retained timelines, the readiness metric can verify the latest
+certification event's HMAC, nested receipt digest, and current policy directly.
+It continues to report timeline collection as deferred. Unrelated audit writes
+cannot erase a valid certification between scrapes; an invalid receipt fails
+closed. Deployment still independently requires the complete ledger integrity
+check, desired-state attestation, SLO health, and current response readiness.
 
 The convergence gate defaults to two healthy samples five seconds apart and a
 300-second deadline. It samples desired-state attestation, change-intelligence
@@ -138,6 +158,13 @@ mode-`0600` document contains:
 
 ## Push And Promote
 
+When CPU affinity is enabled, review the host-generated overlay before deploying.
+It must cover `docker-api-broker`, `admin-panel`, and `admin-panel-ingress`, as
+well as running map services. Regenerate it with the native topology helper,
+preserve existing CPU pool overrides, and review changed assignments before
+applying. Keep this host-specific generated file outside Git; the normal
+coverage and application checks remain mandatory.
+
 Run from the reviewed source checkout:
 
 ```bash
@@ -147,10 +174,48 @@ scripts/push-assured-control-plane.sh \
   --host kspls0
 ```
 
+The push helper first runs the complete native Admin test suite in the reviewed
+checkout through `scripts/deploy-admin-panel.sh --test-only`. A failed test
+prevents staging and production mutation. The deployment helper and the native
+test files are manifest-bound so production never runs stale tests against a
+newer Admin entrypoint. Production repeats its normal deployment checks. Ingress readiness requires two
+consecutive successful native checks within a bounded startup window (300
+seconds by default; `DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS` permits 30–300).
+Each check still requires a 401 response from unauthenticated detailed status
+and successful direct/LAN health probes. This accommodates initial retained-
+history verification without accepting a failed or unavailable auth response.
+The five-minute default covers measured cold-start ledger verification under
+storage load; the earlier 90-second window expired before authentication probes
+recovered. A shorter configured window still fails closed at its own deadline.
+
 The helper transfers the exact manifest files, including the assurance runner
 and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
 helper is accepted from the stage.
+
+Backup and attestation validation can take minutes on busy storage. Start,
+finish, credential trust initialization, Desired State reads/sealing, and
+incident-readiness reads/certification use the same bounded
+`DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS` budget
+(default 1800 seconds; permitted range 60–3600). This changes the transport wait,
+not the validation or health gates. Start-response recovery also requires the
+exact manifest digest, commit, and reason before adopting a durable window.
+Shorter fixed waits previously abandoned a Desired State seal while its retained
+history checks were still running. The shared bound prevents that premature
+failure without accepting an incomplete seal or certification.
+The private Admin ingress permits a 65-minute response window on the named
+verification endpoints, covering the client's maximum one-hour budget with
+transport margin. Ordinary routes retain a five-minute upstream wait. Request
+header/body read limits, idle timeout, body-size limit, allowed methods, and
+application authorization remain enforced. The server write deadline also
+allows the longer responses; increasing only the client's timeout is insufficient.
+Older status responses omit the manifest digest. The client then reads only
+public window metadata through the running Admin verifier, which authenticates
+the existing record with its configured HMAC key. Keys and signatures stay in
+the runtime, and a failed verification cannot resume a deployment. Current
+status responses include the digest directly.
+If the client exhausts its recovery budget, check for a late matching window
+before retrying; cancel that exact unused window if no promotion occurred.
 
 Start and finish operations are durable even when a long verification closes
 the HTTP response before the client receives JSON. The runner polls the signed
@@ -375,3 +440,21 @@ expiry/cancellation, dynamic-map starts, protected container recreation,
 running/strict process restart, health/backup failure, nested/outer tampering,
 mixed signed-evidence archives, RBAC/confirmation, dashboard wiring, metrics,
 and production-host/map-lifecycle guards.
+
+### Local verification read views
+
+Backup verification stages the exact recovery point into a private local
+`/var/tmp` directory before running the existing native checks. This avoids
+random SQLite reads on busy archive storage. Copies are bounded to 4,096 entries
+and 8 GiB, require an additional 1 GiB of free space, reject links and special
+files, and preserve the recovery-point name. Source identities must stay stable
+through copying and validation. Copied files are hashed while copying and again
+after verification; a checker cannot silently repair recovery data and claim it
+passed. SQLite reader indexes and empty WAL files are transient; nonempty WAL
+files remain part of the checked recovery data.
+
+The temporary view is removed after the native verifier returns. The authoritative
+backup remains in its archive location. Every existing integrity, HMAC, manifest,
+and recovery-evidence check remains mandatory. A live qualification of the retained
+1.8 GiB SQLite recovery set passed the complete native verifier in 82 seconds;
+that qualifies this read path and does not claim a production image rollout.

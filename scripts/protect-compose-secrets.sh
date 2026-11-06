@@ -73,8 +73,8 @@ if [[ "$has_movable_source" == false ]]; then
   exit 0
 fi
 
-home="${HOME:?HOME is required to protect Dune Compose secrets}"
-private_root="${DUNE_PRIVATE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$home/.config}/dune-selfhost}"
+operator_home="${HOME:?HOME is required to protect Dune Compose secrets}"
+private_root="${DUNE_PRIVATE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$operator_home/.config}/dune-selfhost}"
 [[ "$private_root" == /* ]] || {
   echo 'DUNE_PRIVATE_CONFIG_DIR must be an absolute path.' >&2
   exit 1
@@ -164,4 +164,4 @@ elif [[ -L "$secrets_source" ]]; then
   }
 fi
 
-echo 'Protected Compose dotenv and secret sources outside the mounted workspace.'
+echo 'Protected Compose dotenv and secret sources outside the mounted workspace.' >&2

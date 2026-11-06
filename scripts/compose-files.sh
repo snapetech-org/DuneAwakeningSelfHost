@@ -5,7 +5,16 @@ env_file="${1:-${DUNE_ENV_FILE:-.env}}"
 default_files="${DUNE_DEFAULT_COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd -P)"
-"$script_dir/protect-compose-secrets.sh" "$repo_root"
+if [[ -n "${DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE:-}" ]]; then
+  approved_file="$DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE"
+  [[ "$approved_file" == /* && -f "$approved_file" && ! -L "$approved_file" && -r "$approved_file" ]] || {
+    printf 'approved host configuration is unavailable\n' >&2
+    exit 78
+  }
+  printf '%s\n' "$approved_file"
+  exit 0
+fi
+"$script_dir/protect-compose-secrets.sh" "$repo_root" >&2
 
 read_env() {
   local key="$1" value
@@ -13,6 +22,10 @@ read_env() {
   value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
   printf '%s' "$value"
 }
+
+if [[ -n "${DUNE_GAME_IMAGE-$(read_env DUNE_GAME_IMAGE)}" ]]; then
+  python3 "$script_dir/runtime-security.py" "$env_file" >/dev/null
+fi
 
 file_exists() {
   [[ -f "$1" ]]

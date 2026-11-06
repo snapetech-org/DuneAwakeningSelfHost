@@ -131,6 +131,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             encoding="utf-8",
         )
         (self.workspace / ".env").write_text("", encoding="utf-8")
+        # Restart phase tests still exercise the real current-build admission.
+        # Their fixture represents a staged package matching the loaded build.
+        build_check = self.workspace / "scripts" / "check-steam-update.sh"
+        build_check.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        build_check.chmod(0o755)
         self.panel = load_admin_panel(self.workspace)
         # Existing route tests isolate their route-specific gate. Focused tests
         # below exercise the additional exact-body change-contract admission.
@@ -155,12 +160,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "DUNE_ADMIN_TOKEN": "inline-token",
             "DUNE_ADMIN_TOKEN_FILE": str(secret_file),
         }):
-            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "file-token")
+            self.assertEqual(self.panel.read_secret_env("DUNE_ADMIN_TOKEN"), "file-token")
         with mock.patch.dict(os.environ, {
             "DUNE_ADMIN_TOKEN": "inline-token",
             "DUNE_ADMIN_TOKEN_FILE": str(self.workspace / "missing-token.secret"),
         }):
-            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "")
+            with self.assertRaisesRegex(ValueError, "cannot read DUNE_ADMIN_TOKEN_FILE"):
+                self.panel.read_secret_env("DUNE_ADMIN_TOKEN")
 
     def test_db_connect_reads_password_file(self):
         secret_file = self.workspace / "database-password.secret"
@@ -260,6 +266,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.headers = {}
         handler.require_token()
 
+    def test_storage_diagnostic_measures_capacity_without_backup_enumeration(self):
+        handler = object.__new__(self.panel.Handler)
+        self.panel.BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(self.panel, "backup_inventory", side_effect=AssertionError("capacity probe must not traverse backups")), mock.patch.object(self.panel, "docker_container_stats", return_value=[]):
+            result = handler.command_console_operation("storage-status")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["readOnly"])
+        self.assertFalse(result["backupInventoryEnumerated"])
+        self.assertGreater(result["backupStorage"]["totalBytes"], 0)
+        self.assertEqual(str(self.panel.BACKUPS_ROOT), result["backupStorage"]["path"])
+
     def test_invalid_token_audit_is_bounded_per_peer_and_credential(self):
         handler = object.__new__(self.panel.Handler)
         handler.path = "/api/status"
@@ -283,6 +300,75 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             handler.require_token()
         self.assertEqual(["auth-failed"], events)
+
+    def test_concurrent_denials_reserve_one_audit_before_slow_write(self):
+        for limit, action in ((5, "auth-failed"), (0, "auth-throttled")):
+            with self.subTest(action=action):
+                handler = object.__new__(self.panel.Handler)
+                handler.path = "/api/status"
+                handler.command = "GET"
+                handler.client_address = ("192.0.2.10", 12345)
+                handler.headers = {}
+                self.panel.ADMIN_REQUIRE_TOKEN = True
+                self.panel.ADMIN_TOKEN = "real-owner-token"
+                self.panel.RBAC_ENABLED = False
+                self.panel.FEDERATED_AUTH_ENABLED = False
+                self.panel.AUTH_FAILURE_LIMIT = limit
+                self.panel.AUTH_FAILURES.clear()
+                self.panel.AUTH_FAILURE_AUDIT.clear()
+                entered, release, second_denied = threading.Event(), threading.Event(), threading.Event()
+                events, unexpected = [], []
+
+                def slow_audit(name, **kwargs):
+                    events.append(name)
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError("test audit was not released")
+
+                def deny(done=None):
+                    try:
+                        handler.require_token()
+                        unexpected.append("credential admitted")
+                    except PermissionError:
+                        if done:
+                            done.set()
+                    except Exception as exc:
+                        unexpected.append(type(exc).__name__)
+
+                handler.audit = slow_audit
+                first = threading.Thread(target=deny)
+                second = threading.Thread(target=deny, args=(second_denied,))
+                first.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    second.start()
+                    self.assertTrue(second_denied.wait(1), "second denial blocked behind duplicate audit work")
+                finally:
+                    release.set()
+                    first.join(3)
+                    if second.ident is not None:
+                        second.join(3)
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+                self.assertEqual([], unexpected)
+                self.assertEqual([action], events)
+
+    def test_failed_auth_audit_releases_reservation_for_retry(self):
+        handler = object.__new__(self.panel.Handler)
+        calls = []
+
+        def audit(action, **kwargs):
+            calls.append(action)
+            if len(calls) == 1:
+                raise OSError("test write failure")
+
+        handler.audit = audit
+        args = dict(peer="192.0.2.10", credential_bucket="test-bucket", failures=1, now=1000)
+        with self.assertRaises(OSError):
+            handler.audit_auth_failure_once("auth-failed", **args)
+        handler.audit_auth_failure_once("auth-failed", **args)
+        handler.audit_auth_failure_once("auth-failed", **args)
+        self.assertEqual(["auth-failed", "auth-failed"], calls)
 
     def test_dual_control_blocks_without_approval_and_consumes_before_dispatch(self):
         body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
@@ -2143,6 +2229,30 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "confirm": "DELETE MARKERS",
             })
 
+    def test_current_build_preflight_failure_never_stops_the_farm(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        build_check = self.workspace / "scripts" / "check-steam-update.sh"
+        with mock.patch.object(self.panel, "run_restart_command") as restart, \
+             mock.patch.object(self.panel, "soft_disconnect_online_players") as disconnect:
+            for missing in (False, True):
+                with self.subTest(missing=missing):
+                    if missing:
+                        build_check.unlink()
+                    else:
+                        build_check.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+                    result = self.panel.execute_restart({
+                        "id": "unverified-current-build", "execute": True,
+                        "action": "restart", "target": "all", "backup": False,
+                    })
+                    self.assertFalse(result["ok"])
+                    self.assertFalse(result["updatePreflight"]["ok"])
+                    self.assertIn("refusing to stop the farm", result["error"])
+                    restart.assert_not_called()
+                    disconnect.assert_not_called()
+
     def test_restart_start_sigpipe_is_success_when_farm_recovers(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -3526,6 +3636,68 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             archive.addfile(info, io.BytesIO(payload))
         with self.assertRaises(ValueError):
             self.panel.import_backup_archive("bad.tar.gz", base64.b64encode(bad_buffer.getvalue()).decode(), "")
+
+    def test_configuration_backup_restores_mounted_private_files_without_links(self):
+        # The host's private source path is intentionally unavailable inside
+        # the Admin container; its dedicated read-only mount is available.
+        (self.workspace / "config/secrets").symlink_to(self.workspace / "unmounted-host-private-source")
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir(mode=0o700)
+        key = mounted / "desired-state-hmac.secret"
+        key.write_text("a" * 64)
+        os.link(key, mounted / "same-material.secret")
+        for name in ("change-intelligence-hmac.secret", "feature-readiness-history-hmac.secret",
+                     "credential-lifecycle-hmac.secret"):
+            (mounted / name).write_text("b" * 64)
+        output = self.workspace / "configuration.tgz"
+        self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertEqual(0o600, output.stat().st_mode & 0o777)
+        with tarfile.open(output, "r:gz") as archive:
+            self.assertTrue(archive.getmember("config/secrets").isdir())
+            self.assertFalse(any(member.issym() or member.islnk() for member in archive))
+            self.assertTrue(archive.getmember("config/secrets/desired-state-hmac.secret").isfile())
+        for child in mounted.iterdir():
+            child.unlink()
+        mounted.rmdir()
+        restored = self.workspace / "isolated-restore"
+        self.panel.safe_extract_restore_archive(output, restored)
+        self.assertEqual("a" * 64, (restored / "config/secrets/desired-state-hmac.secret").read_text())
+        self.assertEqual("a" * 64, (restored / "config/secrets/same-material.secret").read_text())
+
+    def test_configuration_backup_rejects_nested_private_links_and_oversized_trees(self):
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir()
+        outside = self.workspace / "outside-material"
+        outside.write_text("not selected for backup")
+        linked = mounted / "unexpected-link"
+        linked.symlink_to(outside)
+        output = self.workspace / "configuration.tgz"
+        with self.assertRaisesRegex(ValueError, "link or special file"):
+            self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertFalse(output.exists())
+        linked.unlink()
+        with (mounted / "oversized").open("wb") as handle:
+            handle.truncate(16 * 1024 * 1024 + 1)
+        with self.assertRaisesRegex(ValueError, "bounded configuration scope"):
+            self.panel.create_configuration_archive(output, private_mount=mounted)
+        self.assertFalse(output.exists())
+
+    def test_configuration_backup_rejects_private_file_rotation_during_capture(self):
+        mounted = self.workspace / "mounted-private-files"
+        mounted.mkdir()
+        key = mounted / "desired-state-hmac.secret"
+        key.write_text("before")
+        original = tarfile.TarFile.addfile
+
+        def rotate_after_read(archive, info, fileobj=None):
+            result = original(archive, info, fileobj)
+            if info.name == "config/secrets/desired-state-hmac.secret":
+                key.write_text("rotated material")
+            return result
+
+        with mock.patch.object(tarfile.TarFile, "addfile", rotate_after_read):
+            with self.assertRaisesRegex(ValueError, "changed during archival"):
+                self.panel.create_configuration_archive(self.workspace / "configuration.tgz", private_mount=mounted)
 
     def test_native_restore_dry_run_resolves_current_backup_layout(self):
         backup_set = self.panel.BACKUPS_ROOT / "maintenance" / "fixture"
@@ -5612,6 +5784,96 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
         self.assertIn("dash_maintenance_outcome_collector_up 1\n", texts[0][0])
 
+    def test_large_ledger_metrics_reuse_only_recent_verified_readiness(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        status = {"integrity": {"ok": True}, "openIncidents": [], "readinessCertification": {
+            "currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}}
+        with mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", False), mock.patch.object(panel, "retained_metrics_should_defer", return_value=True), mock.patch.object(panel, "change_intelligence_store", side_effect=AssertionError("metrics must not walk the ledger")):
+            panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value=status, updatedAt=time.time())
+            self.assertTrue(panel.change_intelligence_public_status()["integrity"]["ok"])
+            metrics = panel.deferred_change_intelligence_metrics()
+            self.assertIn("dash_change_intelligence_metrics_deferred 1\n", metrics)
+            self.assertIn("dash_incident_readiness_certification_ready 1\n", metrics)
+            for reason in ("expired", "future", "integrity", "receipt", "policy"):
+                value = json.loads(json.dumps(status))
+                updated = time.time()
+                if reason == "expired": updated -= panel.CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS + 1
+                elif reason == "future": updated += 60
+                elif reason == "integrity": value["integrity"]["ok"] = False
+                elif reason == "receipt": value["readinessCertification"]["receiptVerification"]["ok"] = False
+                else: value["readinessCertification"]["policyCurrent"] = False
+                panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value=value, updatedAt=updated)
+                with self.subTest(reason=reason):
+                    self.assertIn("dash_incident_readiness_certification_ready 0\n", panel.deferred_change_intelligence_metrics())
+            panel.CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.acquire()
+            try:
+                self.assertIsNone(panel.change_intelligence_verified_cache())
+            finally:
+                panel.CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.release()
+        with mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", True), mock.patch.object(panel, "deployment_assurance_store") as store:
+            store.return_value.prometheus.return_value = "dash_deployment_assurance_latest_ready 1\n"
+            self.assertIn("dash_deployment_assurance_latest_ready 1\n", panel.deferred_change_intelligence_metrics())
+
+    def test_deferred_metrics_verify_small_readiness_event_without_timeline_cache(self):
+        panel = self.panel
+        proof = {"currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}
+        with mock.patch.object(panel, "change_intelligence_verified_cache", return_value=None), mock.patch.object(panel, "CHANGE_INTELLIGENCE_ENABLED", True), mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", False), mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.certification_status.return_value = proof
+            metrics = panel.deferred_change_intelligence_metrics()
+            self.assertIn("dash_incident_readiness_certification_ready 1\n", metrics)
+            self.assertIn("dash_change_intelligence_collector_up 0\n", metrics)
+            store.return_value.status.assert_not_called()
+            store.return_value.certification_status.side_effect = ValueError("invalid receipt HMAC")
+            self.assertIn("dash_incident_readiness_certification_ready 0\n", panel.deferred_change_intelligence_metrics())
+
+    def test_recorded_change_invalidates_verified_status_and_metric_document(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        original_metrics = dict(panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(panel.CHANGE_INTELLIGENCE_RUNTIME)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        self.addCleanup(lambda: (panel.METRICS_DOCUMENT_CACHE.clear(), panel.METRICS_DOCUMENT_CACHE.update(original_metrics)))
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_RUNTIME.update(original_runtime))
+        panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value={"integrity": {"ok": True}}, updatedAt=time.time())
+        panel.METRICS_DOCUMENT_CACHE["change-intelligence"] = {"value": "old-ready"}
+        with mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.record.return_value = {"id": "new-change"}
+            panel.change_intelligence_record_event({"action": "configuration-change"})
+        self.assertIsNone(panel.change_intelligence_verified_cache())
+        self.assertNotIn("change-intelligence", panel.METRICS_DOCUMENT_CACHE)
+
+    def test_recording_never_waits_for_the_full_status_verification_lock(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        with mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.record.return_value = {"id": "concurrent-change"}
+            with panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
+                thread = threading.Thread(target=panel.change_intelligence_record_event, args=({"action": "change"},))
+                thread.start()
+                thread.join(1)
+                self.assertFalse(thread.is_alive(), "audit recording waited for a full retained-ledger walk")
+            thread.join(1)
+            def verify():
+                panel.change_intelligence_record_event({"action": "change-during-verification"})
+                return {"integrity": {"ok": True}}
+            store.return_value.status.side_effect = verify
+            panel.change_intelligence_cached_status(force=True)
+            self.assertIsNone(panel.change_intelligence_verified_cache())
+
+    def test_assurance_finish_reverifies_after_its_audited_intent(self):
+        panel = self.panel
+        verified = {"integrity": {"ok": True}, "openIncidents": [], "readinessCertification": {
+            "currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}}
+        def change(*, force=False):
+            return verified if force else {"integrity": {"ok": False}, "statusDeferred": True}
+        with mock.patch.object(panel, "desired_state_public_status", return_value={"state": "attested", "integrity": {"ok": True}}), mock.patch.object(panel, "change_intelligence_public_status", side_effect=change) as check, mock.patch.object(panel, "operational_slo_public_status", return_value={"overall": "healthy", "integrity": {"ok": True}}), mock.patch.object(panel, "docker_service_inventory", return_value=[{"service": "admin-panel", "state": "running"}]), mock.patch.object(panel, "deployment_assurance_prometheus_ready", return_value=True):
+            result = panel.deployment_assurance_health({"ok": True})
+        self.assertTrue(all(result.values()), result)
+        check.assert_called_once_with(force=True)
+
     def test_change_intelligence_verified_status_is_single_flight_cached_and_forceable(self):
         original_store = self.panel.change_intelligence_store
         original_cache = dict(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
@@ -5831,6 +6093,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertGreaterEqual(len(mutation_steps), 9)
         self.assertTrue(all(step["requiredCapability"] != "read" for step in mutation_steps))
 
+    def test_service_recovery_contract_requires_a_qualified_live_transport(self):
+        step = {"id": "recover", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "featureGate": "DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE"}
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": False}):
+            result = self.panel._response_recovery_contract(step, {"id": "owner", "capabilities": ["*"]})
+        self.assertTrue(result["featureGateEnabled"])
+        self.assertFalse(result["transportReady"])
+        self.assertFalse(result["ready"])
+
     def test_response_readiness_drill_runs_only_fixed_diagnostics_and_records_digest_receipt(self):
         plan = {
             "incidentKey": "slo:one", "runbookId": "control-plane-availability",
@@ -5863,7 +6133,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             calls.append(command_id)
             return {"ok": True, "bounded": True}
 
-        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}):
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": True, "serviceControlReady": True, "statefulControlReady": True}):
             result = self.panel.run_response_readiness_drill("slo:one", "a" * 64, principal, executor)
         self.assertTrue(result["ready"])
         self.assertFalse(result["recoveryExecuted"])
@@ -5929,7 +6199,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             return {"ok": True, "bounded": True}
 
         gates = {step["featureGate"]: "true" for runbook in policy["runbooks"] for step in runbook["steps"] if step["mutation"]}
-        with mock.patch.dict(os.environ, gates):
+        with mock.patch.dict(os.environ, gates), mock.patch.object(self.panel.host_service_control, "health", return_value={"qualified": True, "serviceControlReady": True, "statefulControlReady": True}):
             result = self.panel.run_incident_readiness_certification(policy["policySha256"], {"id": "owner", "capabilities": ["*"]}, executor)
         self.assertTrue(result["ready"])
         self.assertEqual(13, result["summary"]["runbooksReady"])

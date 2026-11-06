@@ -14,6 +14,7 @@ import importlib.util
 import json
 import math
 import os
+import itertools
 import pathlib
 import re
 import secrets
@@ -69,6 +70,8 @@ import base_creator
 import base_retirement
 import gameplay_presets
 import command_console
+import host_service_control
+from backup_verification_view import local_read_view
 import federated_auth
 import cosmetics_admin
 import progression_admin
@@ -80,6 +83,7 @@ import desired_state
 import change_intelligence
 import deployment_assurance
 import update_readiness
+import runtime_security
 import maintenance_outcomes
 import maintenance_planner
 import public_directory
@@ -271,6 +275,7 @@ AUTH_FAILURE_WINDOW_SECONDS = 60
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURES = {}
 AUTH_FAILURE_AUDIT = {}
+AUTH_FAILURE_AUDIT_LOCK = threading.Lock()
 AUTH_FAILURE_AUDIT_INTERVAL_SECONDS = 60
 AUDIT_LOCK = threading.Lock()
 STEAM_PROFILE_CACHE_LOCK = threading.Lock()
@@ -554,6 +559,7 @@ CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "
 CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "60")), 300))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
+CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK = threading.Lock()
 # Full change-intelligence metrics call Store.status(), which verifies every
 # retained event's HMAC chain. Keep that expensive operation off the request
 # path once the retained ledger exceeds this bounded size; the verified
@@ -5067,36 +5073,14 @@ def control_docker_service(service, action, fast_dynamic_start=False):
     stateful = service in {"postgres", "admin-rmq", "game-rmq"}
     if stateful and not STATEFUL_SERVICE_CONTROL_ENABLED:
         raise PermissionError("stateful service control is disabled; set DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED=true")
-    script = ROOT / "scripts" / "restart-target.sh"
-    if not script.exists():
-        raise FileNotFoundError("scripts/restart-target.sh is unavailable")
-    env = os.environ.copy()
-    env.update({
-        "ENV_FILE": str(ENV_FILE),
-        "DUNE_RESTART_TARGET": service,
-        "DUNE_RESTART_SERVICES": service,
-        "DUNE_RESTART_ACTION": "shutdown" if action == "stop" else "restart",
-        "DUNE_RESTART_PHASE": action,
-        "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
-        "DUNE_RESTART_ALLOW_STATEFUL": "true" if stateful else "false",
-        "DUNE_RESTART_FAST_DYNAMIC_START": "true" if fast_dynamic_start else "false",
-    })
-    completed = subprocess.run(
-        [str(script), service], cwd=ROOT, env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False,
+    if not SERVICE_CONTROL_ENABLED:
+        raise PermissionError("service control is disabled")
+    if fast_dynamic_start:
+        raise PermissionError("manual recovery requires normal post-start hooks")
+    result = host_service_control.control(
+        os.environ.get("DUNE_RESTART_API_SOCKET", "/run/dune-restart-api.sock"), service, action,
     )
-    result = {
-        "ok": completed.returncode == 0,
-        "service": service,
-        "action": action,
-        "exitCode": completed.returncode,
-        "stdout": completed.stdout[-256 * 1024:],
-        "stderr": completed.stderr[-256 * 1024:],
-        "postState": next((row for row in docker_service_inventory() if row["service"] == service), None),
-        "postHooks": action in ("start", "restart"),
-    }
-    if not result["ok"]:
-        raise RuntimeError((result["stderr"] or result["stdout"] or f"service action exited {completed.returncode}")[-4000:])
+    result["postState"] = next((row for row in docker_service_inventory() if row["service"] == service), None)
     return result
 
 
@@ -6655,6 +6639,19 @@ def update_readiness_snapshot(game=None, force=False):
         steam_settled = bool(package_complete and (not installed or not target or installed == target))
         package_evidence = {"packageTags": package_tags, "missing": [], "errors": [], "source": "check-steam-update.sh"}
 
+    try:
+        runtime_settings = {key: os.environ[key] if key in os.environ else env_file_value(key) for key in runtime_security.KEYS}
+        runtime_approval = runtime_security.configuration(ROOT, runtime_settings, candidate.get("imageTag"))
+        if runtime_approval:
+            candidate = {**candidate, "runtimeSecurity": {
+                "imageId": runtime_approval["imageId"],
+                "vendorImageId": runtime_approval["vendorImageId"],
+                "approvalSha256": hashlib.sha256(json.dumps(runtime_approval, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            }}
+    except (OSError, ValueError) as exc:
+        package_complete = False
+        package_evidence.setdefault("errors", []).append("runtime security approval rejected: " + str(exc)[:500])
+
     coriolis = update_readiness_coriolis_native()
     latest_set = latest_full_backup_set()
     backup = {"ok": False, "path": latest_set.get("path"), "exitCode": None}
@@ -7844,11 +7841,22 @@ def retained_metrics_should_defer():
 
 
 def deferred_change_intelligence_metrics():
+    status = change_intelligence_verified_cache()
+    certification = (status or {}).get("readinessCertification") or {}
+    if status is None and CHANGE_INTELLIGENCE_ENABLED:
+        try:
+            certification = change_intelligence_store().certification_status() or {}
+        except Exception:
+            certification = {}
+    ready = bool(certification.get("currentReady") and certification.get("policyCurrent")
+                 and (certification.get("receiptVerification") or {}).get("ok"))
     return (
         "# HELP dash_change_intelligence_collector_up Change timeline metrics are deferred while the retained ledger is large.\n"
         "# TYPE dash_change_intelligence_collector_up gauge\n"
         "dash_change_intelligence_collector_up 0\n"
         "dash_change_intelligence_metrics_deferred 1\n"
+        f"dash_incident_readiness_certification_ready {int(ready)}\n"
+        + (deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n")
     )
 
 
@@ -8411,6 +8419,16 @@ def verify_backup_set(relative_path):
 
 
 def verify_backup_set_native(path):
+    original = pathlib.Path(path)
+    try:
+        with local_read_view(original) as view:
+            ok, stdout, stderr = _verify_backup_set_native_contents(view)
+        return ok, stdout.replace(str(view), str(original)), stderr.replace(str(view), str(original))
+    except (OSError, ValueError) as exc:
+        return False, "", f"FAIL backup verification read view: {exc}\n"
+
+
+def _verify_backup_set_native_contents(path):
     """Structural verifier for the minimal admin image, which has no bash."""
     output = []
     errors = []
@@ -10099,7 +10117,9 @@ def deployment_assurance_prometheus_ready():
 
 def deployment_assurance_health(backup):
     desired = desired_state_public_status()
-    change = change_intelligence_public_status(force=False)
+    # The audited finish intent invalidates older status. Reverify after that
+    # write instead of treating a deliberately deferred metrics view as health.
+    change = change_intelligence_public_status(force=True)
     slo = operational_slo_public_status()
     certification = change.get("readinessCertification") or {}
     services = {row["service"]: row for row in docker_service_inventory()}
@@ -10324,6 +10344,12 @@ def ensure_change_intelligence():
 
 def change_intelligence_record_event(event):
     result = change_intelligence_store().record(event, source="admin-audit")
+    with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+        generation = int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0) + 1
+        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0, "generation": generation})
+    with METRICS_DOCUMENT_CACHE_CONDITION:
+        METRICS_DOCUMENT_CACHE.pop("change-intelligence", None)
+        METRICS_DOCUMENT_CACHE_CONDITION.notify_all()
     CHANGE_INTELLIGENCE_RUNTIME.update({
         "ready": True,
         "lastEventAt": time.time(),
@@ -10336,19 +10362,39 @@ def change_intelligence_record_event(event):
 def change_intelligence_cached_status(force=False):
     now = time.time()
     with CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
-        cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
-        age = now - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
-        if cached is not None and not force and age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS:
-            return json.loads(json.dumps(cached))
+        with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+            generation = int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0)
+            cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
+            age = now - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
+            if cached is not None and not force and 0 <= age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS:
+                return json.loads(json.dumps(cached))
         status = change_intelligence_store().status()
-        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": time.time()})
+        with CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK:
+            if generation == int(CHANGE_INTELLIGENCE_STATUS_CACHE.get("generation") or 0):
+                CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": time.time()})
         return status
+
+
+def change_intelligence_verified_cache():
+    """Peek without disk work or waiting for an in-flight full verification."""
+    if not CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.acquire(blocking=False):
+        return None
+    try:
+        cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
+        age = time.time() - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
+        if (isinstance(cached, dict) and (cached.get("integrity") or {}).get("ok") is True
+                and 0 <= age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS):
+            return json.loads(json.dumps(cached))
+        return None
+    finally:
+        CHANGE_INTELLIGENCE_STATUS_CACHE_GENERATION_LOCK.release()
 
 
 def change_intelligence_public_status(force=False):
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
-    if not force and retained_metrics_should_defer():
+    status = change_intelligence_verified_cache() if not force else None
+    if status is None and not force and retained_metrics_should_defer():
         return {
             "ok": False,
             "enabled": True,
@@ -10366,7 +10412,8 @@ def change_intelligence_public_status(force=False):
             "responseDrillConfirm": CONFIRM_RESPONSE_DRILL,
             "readinessCertificationConfirm": CONFIRM_READINESS_CERTIFICATION,
         }
-    status = change_intelligence_cached_status(force=force)
+    if status is None:
+        status = change_intelligence_cached_status(force=force)
     status.update({
         "enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
         "cacheSeconds": CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS,
@@ -10400,11 +10447,17 @@ def _response_recovery_contract(step, principal):
     capability_ready = access_control.has_capability(principal, step["requiredCapability"])
     gate_enabled = bool(gate and os.environ.get(gate, "false").lower() in ("1", "true", "yes", "on"))
     confirmation_ready = not step.get("confirmation") or bool(str(step["confirmation"]).strip())
+    transport_ready = True
+    if gate in {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED"}:
+        transport = host_service_control.health(os.environ.get("DUNE_RESTART_API_SOCKET", "/run/dune-restart-api.sock"))
+        transport_ready = bool(transport.get("qualified") and transport.get("serviceControlReady")
+                               and (gate != "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED" or transport.get("statefulControlReady")))
     return {
         "stepId": step["id"], "surface": step["surface"], "requiredCapability": step["requiredCapability"],
         "capabilityReady": capability_ready, "featureGate": gate, "featureGateEnabled": gate_enabled,
         "confirmation": step.get("confirmation"), "confirmationConfigured": confirmation_ready,
-        "ready": capability_ready and gate_enabled and confirmation_ready,
+        "transportReady": transport_ready,
+        "ready": capability_ready and gate_enabled and confirmation_ready and transport_ready,
     }
 
 
@@ -11519,22 +11572,100 @@ def secure_admin_backup_path(path, directory=False):
     return path
 
 
-def add_tree_archive(archive_path, entries):
+def materialized_archive_members(source, arcname):
+    """Snapshot one selected private tree without following nested links."""
+    root = pathlib.Path(source).resolve(strict=True)
+    name = pathlib.PurePosixPath(arcname)
+    if not root.is_dir() or root in {pathlib.Path('/'), ROOT.resolve(), CONFIG_ROOT.resolve()}:
+        raise ValueError("private recovery tree must be a dedicated directory")
+    if name.is_absolute() or ".." in name.parts:
+        raise ValueError("private recovery archive name must be relative")
+    members = []
+    total = 0
+    for path in itertools.chain((root,), root.rglob("*")):
+        metadata = path.lstat()
+        if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+            raise ValueError("private recovery tree contains a link or special file")
+        total += metadata.st_size if stat.S_ISREG(metadata.st_mode) else 0
+        if len(members) >= 4096 or total > 16 * 1024 * 1024:
+            raise ValueError("private recovery tree exceeds its bounded configuration scope")
+        members.append((path, str(name / path.relative_to(root)), metadata))
+    return members
+
+
+def add_tree_archive(archive_path, entries, *, materialized_roots=()):
     added = []
     skipped = []
-    with tarfile.open(archive_path, "w:gz") as archive:
-        for source, arcname in entries:
-            source = pathlib.Path(source)
-            if not source.exists():
-                skipped.append({"path": str(source), "reason": "missing"})
-                continue
-            try:
-                archive.add(source, arcname=arcname)
-                added.append({"path": str(source), "archiveName": arcname})
-            except (OSError, tarfile.TarError) as exc:
-                skipped.append({"path": str(source), "reason": str(exc)})
-    secure_admin_backup_path(archive_path)
+    private_members = []
+    private_names = set()
+    for source, arcname in materialized_roots:
+        private_members.extend(materialized_archive_members(source, arcname))
+        private_names.add(str(pathlib.PurePosixPath(arcname)))
+
+    def omit_materialized(info):
+        if any(info.name == name or info.name.startswith(name + "/") for name in private_names):
+            return None
+        return info
+
+    archive_path = pathlib.Path(archive_path)
+    descriptor = os.open(archive_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(descriptor)
+    try:
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for source, arcname in entries:
+                source = pathlib.Path(source)
+                if not source.exists():
+                    skipped.append({"path": str(source), "reason": "missing"})
+                    continue
+                try:
+                    archive.add(source, arcname=arcname, filter=omit_materialized)
+                    added.append({"path": str(source), "archiveName": arcname})
+                except (OSError, tarfile.TarError) as exc:
+                    skipped.append({"path": str(source), "reason": str(exc)})
+            for source, arcname, expected in private_members:
+                info = archive.gettarinfo(str(source), arcname=arcname)
+                if stat.S_ISDIR(expected.st_mode):
+                    info.type = tarfile.DIRTYPE
+                    info.linkname = ""
+                    info.size = 0
+                    info.mode = 0o700
+                    archive.addfile(info)
+                    continue
+                descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(descriptor, "rb") as handle:
+                    identity = lambda value: (value.st_dev, value.st_ino, value.st_mode,
+                                               value.st_uid, value.st_gid, value.st_size, value.st_mtime_ns)
+                    if identity(os.fstat(handle.fileno())) != identity(expected):
+                        raise ValueError("private recovery file changed before archival")
+                    # Serialize regular file bytes even when two selected names are
+                    # hard links. Restore archives must not depend on link targets.
+                    info.type = tarfile.REGTYPE
+                    info.linkname = ""
+                    info.size = expected.st_size
+                    info.mode = 0o600
+                    archive.addfile(info, handle)
+                    if identity(os.fstat(handle.fileno())) != identity(expected) or identity(source.lstat()) != identity(expected):
+                        raise ValueError("private recovery file changed during archival")
+            added.extend({"path": str(source), "archiveName": name} for source, name in materialized_roots)
+    finally:
+        secure_admin_backup_path(archive_path)
     return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
+
+
+def create_configuration_archive(archive_path, *, private_mount=None):
+    entries = [(CONFIG_ROOT.resolve(), "config")]
+    if ENV_FILE.exists():
+        entries.append((ENV_FILE.resolve(), ".env"))
+    secret_root = CONFIG_ROOT / "secrets"
+    private_mount = pathlib.Path(private_mount) if private_mount is not None else pathlib.Path("/workspace-secret-files")
+    if not secret_root.is_dir() and private_mount.is_dir():
+        secret_root = private_mount
+    roots = []
+    if secret_root.is_dir():
+        roots.append((secret_root, "config/secrets"))
+    elif secret_root.is_symlink():
+        raise ValueError("configured private recovery directory is unavailable")
+    return add_tree_archive(archive_path, entries, materialized_roots=roots)
 
 
 def archive_operator_evidence(archive_path):
@@ -11813,10 +11944,7 @@ def create_maintenance_backup(job):
     except Exception as exc:
         result["warnings"].append({"artifact": "postgresLayers", "error": str(exc)})
 
-    archive_entries = [(CONFIG_ROOT, "config")]
-    if ENV_FILE.exists():
-        archive_entries.append((ENV_FILE, ".env"))
-    result["artifacts"]["config"] = add_tree_archive(backup_dir / "config-and-env.tgz", archive_entries)
+    result["artifacts"]["config"] = create_configuration_archive(backup_dir / "config-and-env.tgz")
 
     data_root = ROOT / "data"
     server_saved = data_root / "server-saved"
@@ -16816,9 +16944,16 @@ class Handler(BaseHTTPRequestHandler):
             """)[0]
             return {"ok": not any(int(value or 0) for value in counts.values()), "readOnly": True, **counts}
         if command_id == "storage-status":
-            disk = shutil.disk_usage(ROOT)
-            backups = backup_inventory(50)
-            return {"ok": True, "workspace": {"path": str(ROOT), "totalBytes": disk.total, "usedBytes": disk.used, "freeBytes": disk.free, "usedPercent": round(disk.used / disk.total * 100, 1) if disk.total else None}, "backupSetsReturned": len(backups.get("sets") or []), "backupRoot": str(BACKUPS_ROOT), "containers": docker_container_stats(live_stats=False)}
+            def capacity(path):
+                disk = shutil.disk_usage(path)
+                return {"path": str(path), "totalBytes": disk.total, "usedBytes": disk.used,
+                        "freeBytes": disk.free, "usedPercent": round(disk.used / disk.total * 100, 1) if disk.total else None}
+
+            # This bounded diagnostic measures capacity. Backup discovery and
+            # verification have their own endpoints and may traverse large trees.
+            return {"ok": True, "readOnly": True, "workspace": capacity(ROOT),
+                    "backupStorage": capacity(BACKUPS_ROOT), "backupRoot": str(BACKUPS_ROOT),
+                    "backupInventoryEnumerated": False, "containers": docker_container_stats(live_stats=False)}
         if command_id == "cpu-affinity-status":
             rows = []
             for container in docker_project_containers():
@@ -19222,6 +19357,27 @@ class Handler(BaseHTTPRequestHandler):
         backup_file(path)
         path.write_text(content, encoding="utf-8")
 
+    def audit_auth_failure_once(self, action, *, peer, credential_bucket, failures, now):
+        key = (peer, credential_bucket, action)
+        # Reserve before durable audit work: a slow ledger must not admit a
+        # second writer for the same interval on every concurrent probe.
+        with AUTH_FAILURE_AUDIT_LOCK:
+            previous = AUTH_FAILURE_AUDIT.get(key)
+            if now - float(previous or 0) < AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
+                return
+            AUTH_FAILURE_AUDIT[key] = now
+        try:
+            self.audit(action, ok=False, failures=failures)
+        except BaseException:
+            # A failed write must leave the next denial able to retry it.
+            with AUTH_FAILURE_AUDIT_LOCK:
+                if AUTH_FAILURE_AUDIT.get(key) == now:
+                    if previous is None:
+                        AUTH_FAILURE_AUDIT.pop(key, None)
+                    else:
+                        AUTH_FAILURE_AUDIT[key] = previous
+            raise
+
     def require_token(self):
         if not ADMIN_REQUIRE_TOKEN:
             return
@@ -19250,17 +19406,15 @@ class Handler(BaseHTTPRequestHandler):
                 principal = None
         if not principal:
             if len(failures) >= AUTH_FAILURE_LIMIT:
-                audit_key = (peer, credential_bucket, "auth-throttled")
-                if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
-                    self.audit("auth-throttled", ok=False, failures=len(failures))
-                    AUTH_FAILURE_AUDIT[audit_key] = now
+                self.audit_auth_failure_once("auth-throttled", peer=peer,
+                                             credential_bucket=credential_bucket,
+                                             failures=len(failures), now=now)
                 raise PermissionError("too many failed admin token attempts")
             failures.append(now)
             AUTH_FAILURES[failure_key] = failures
-            audit_key = (peer, credential_bucket, "auth-failed")
-            if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
-                self.audit("auth-failed", ok=False, failures=len(failures))
-                AUTH_FAILURE_AUDIT[audit_key] = now
+            self.audit_auth_failure_once("auth-failed", peer=peer,
+                                         credential_bucket=credential_bucket,
+                                         failures=len(failures), now=now)
             raise PermissionError("invalid admin token")
         AUTH_FAILURES.pop(failure_key, None)
         required = access_control.required_capability(getattr(self, "command", "GET"), self.path)

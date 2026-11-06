@@ -50,6 +50,8 @@ def run(command_id, executor, environment=None):
     future=pool.submit(executor,command_id)
     try:
         value=future.result(timeout=spec["timeout"])
+        if isinstance(value,dict) and value.get("ok") is False:
+            returncode=1
         output=json.dumps(value,sort_keys=True,indent=2,default=str)
     except concurrent.futures.TimeoutError:
         timed_out=True;returncode=124;future.cancel();output="operation timed out"

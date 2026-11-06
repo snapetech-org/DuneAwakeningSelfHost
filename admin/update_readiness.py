@@ -84,6 +84,13 @@ def normalize_candidate(candidate):
         if value and not BUILD_PATTERN.fullmatch(value):
             raise ValueError(f"update candidate {key} is invalid")
         normalized[key] = value or None
+    runtime = candidate.get("runtimeSecurity")
+    if runtime is not None:
+        if not isinstance(runtime, dict) or set(runtime) != {"imageId", "vendorImageId", "approvalSha256"}:
+            raise ValueError("update candidate runtime security identity is invalid")
+        if any(not re.fullmatch(r"sha256:[0-9a-f]{64}", str(runtime[key])) for key in ("imageId", "vendorImageId")) or not HASH_PATTERN.fullmatch(str(runtime["approvalSha256"])):
+            raise ValueError("update candidate runtime security digest is invalid")
+        normalized["runtimeSecurity"] = dict(runtime)
     normalized["updateRequired"] = status in {"update-available", "reload-required"}
     normalized["fingerprint"] = hashlib.sha256(canonical({key: value for key, value in normalized.items() if key != "fingerprint"}).encode()).hexdigest()
     return normalized

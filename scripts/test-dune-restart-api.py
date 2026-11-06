@@ -2,6 +2,8 @@
 import importlib.util
 import pathlib
 import unittest
+import tempfile
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("dune_restart_api.py")
@@ -33,7 +35,11 @@ class RestartApiValidationTests(unittest.TestCase):
         self.assertEqual(result["phase"], "start")
 
     def test_host_map_roster_contains_autoscaler_target(self):
-        self.assertIn("testing-hephaestus", API.configured_map_services())
+        with tempfile.NamedTemporaryFile(mode="w") as fixture:
+            fixture.write("DUNE_WORLD_PARTITION_COUNT=31\n")
+            fixture.flush()
+            with mock.patch.object(API, "ENV_FILE", pathlib.Path(fixture.name)):
+                self.assertIn("testing-hephaestus", API.configured_map_services())
 
     def test_accepts_a_full_fleet_request(self):
         result = API.validate_request(request(target="all", services=[]), self.maps)

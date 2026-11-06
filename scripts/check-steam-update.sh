@@ -196,6 +196,15 @@ if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" !=
   exit 2
 fi
 
+if [[ -n "$(env_or_file DUNE_GAME_IMAGE)" ]]; then
+  security_tag="$package_tag"
+  current_build="${current_tag%%-*}"; package_build="${package_tag%%-*}"
+  if [[ "$current_build" =~ ^[0-9]+$ && "$package_build" =~ ^[0-9]+$ && "$package_build" -lt "$current_build" ]]; then
+    security_tag="$current_tag"
+  fi
+  python3 "$script_dir/runtime-security.py" "$env_file" --expected-tag "$security_tag" >/dev/null
+fi
+
 if [[ "$current_tag" == "$package_tag" ]]; then
   if [[ -z "$loaded_buildid" || "$installed_buildid" != "$loaded_buildid" ]]; then
     echo "status: same tag but Steam build changed"

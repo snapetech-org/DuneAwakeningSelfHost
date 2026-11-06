@@ -40,7 +40,10 @@ usable set must contain bounded regular files named `manifest.txt`,
 `config.tgz`, `config-tls.tgz`, `rabbitmq-admin.tgz`, and
 `rabbitmq-game.tgz`. Requested paths must remain under the workspace backup
 root. Symlinked sets, missing layers, empty files, and oversized archives fail
-closed.
+closed. Automatic selection compares the oldest required archive/manifest
+mtime, anchored by recorded creation timestamps in the manifest and backup
+name. Directory modification times are ignored: inspecting or copying an old
+set must not make its recovery data appear fresh.
 
 ## Isolation contract
 
@@ -82,9 +85,11 @@ For each copied broker, the receipt records:
 - a successful `rabbitmqctl -q status`; and
 - counts of vhosts, users, queues, exchanges, bindings, and messages.
 
-Vhost, user, queue, exchange, and binding names are used only inside the
-disposable container while querying the restored state. They are never written
-to the receipt, Admin API, Prometheus, or audit events. Failed container logs
+Vhost names are bounded in memory for per-vhost queries. User, queue, exchange,
+and binding inventories are reduced to counts inside the disposable container;
+queue totals include message counts. Only bounded numeric results return to
+the host, so large valid inventories do not require a larger output limit.
+Names are never written to the receipt, Admin API, Prometheus, or audit events. Failed container logs
 are also withheld; only their SHA-256 is returned for correlation.
 
 The run passes only when both brokers recover, every inspected isolation

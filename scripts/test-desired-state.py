@@ -6,6 +6,7 @@ import pathlib
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 import sys
 
@@ -75,6 +76,32 @@ class DesiredStateTests(unittest.TestCase):
         self.secret_path.chmod(0o644)
         with self.assertRaises(PermissionError):
             desired_state.read_secret(self.secret_path)
+
+    def test_verification_reads_key_once_and_rechecks_after_all_rows(self):
+        self.store.seal(self.snapshot(at=1000), actor="fixture", reason="bounded verification fixture")
+        for at in range(1001, 1006):
+            self.store.observe(self.snapshot(at=at))
+        with mock.patch.object(desired_state, "read_secret", wraps=desired_state.read_secret) as read:
+            result = self.store.verify()
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, read.call_count)
+
+    def test_verification_fails_if_key_rotates_during_row_checks(self):
+        self.store.seal(self.snapshot(at=1000), actor="fixture", reason="key rotation fixture")
+        original = self.store._sign
+        changed = False
+
+        def rotate(payload, *, secret=None):
+            nonlocal changed
+            if not changed:
+                changed = True
+                self.secret_path.write_text("b" * 64 + "\n", encoding="utf-8")
+            return original(payload, secret=secret)
+
+        with mock.patch.object(self.store, "_sign", side_effect=rotate):
+            result = self.store.verify()
+        self.assertFalse(result["ok"])
+        self.assertIn("key changed during verification", result["error"])
 
     def test_snapshot_never_contains_plaintext_secrets_or_mount_sources(self):
         snapshot = self.snapshot()

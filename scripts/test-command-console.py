@@ -10,6 +10,9 @@ class CommandConsoleTests(unittest.TestCase):
         calls=[]
         result=MODULE.run("inventory-audit",lambda command_id:(calls.append(command_id) or {"clean":True}),environment={})
         self.assertEqual(calls,["inventory-audit"]);self.assertTrue(result["ok"]);self.assertFalse(result["shell"]);self.assertFalse(result["subprocess"]);self.assertIn('"clean": true',result["output"])
+    def test_native_diagnostic_failure_is_not_reported_as_success(self):
+        result=MODULE.run("rmq-health",lambda _: {"ok":False,"probes":[]},environment={})
+        self.assertFalse(result["ok"]);self.assertEqual(1,result["returncode"]);self.assertFalse(result["timedOut"])
     def test_unknown_command_fails_closed(self):
         with self.assertRaises(ValueError): MODULE.run("status; id",lambda value:value)
     def test_output_redaction_and_cap(self):

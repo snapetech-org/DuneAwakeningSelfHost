@@ -163,6 +163,22 @@ class RestoreDrillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             restore_drill.select_dump(self.workspace, staging)
 
+    def test_selection_never_descends_into_private_restore_sources(self):
+        private = self.backups / "admin-panel" / "restore-drills" / "deep"
+        private.mkdir(parents=True)
+        (private / "newest.dump").write_bytes(b"private")
+        original = os.scandir
+        visited = []
+        def checked_scandir(path):
+            visited.append(pathlib.Path(path))
+            if "restore-drills" in pathlib.Path(path).parts:
+                raise AssertionError("private recovery tree was traversed")
+            return original(path)
+        from unittest.mock import patch
+        with patch.object(os, "scandir", checked_scandir):
+            self.assertEqual(self.dump.resolve(), restore_drill.select_dump(self.workspace))
+        self.assertTrue(visited)
+
     def test_container_spec_is_networkless_bounded_and_read_only(self):
         spec = restore_drill.build_container_spec("/host/private.dump", host_passwd="/host/passwd", host_group="/host/group", run_uid=1234, run_gid=1235, memory_bytes=1024, cpu_count=1.5, pids_limit=77, pgdata_bytes=2048)
         host = spec["HostConfig"]

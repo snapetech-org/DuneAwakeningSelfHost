@@ -81,6 +81,25 @@ def _bounded_regular(path, maximum):
     return 0 < size <= int(maximum)
 
 
+BACKUP_LAYERS = ("manifest.txt", "config.tgz", "config-tls.tgz", "rabbitmq-admin.tgz", "rabbitmq-game.tgz")
+
+
+def backup_created_epoch(candidate):
+    """Directory touches and fresh copies must not make old recovery data fresh."""
+    times = [(candidate / name).stat().st_mtime for name in BACKUP_LAYERS]
+    stamps = re.findall(r"(?m)^created_utc=(\d{8}T\d{6}Z)\s*$",
+                        (candidate / "manifest.txt").read_text(encoding="utf-8"))
+    if len(stamps) > 1:
+        raise ValueError("backup manifest has ambiguous creation timestamps")
+    named = re.match(r"^(\d{8}T\d{6}Z)(?:$|[-_])", candidate.name)
+    if named:
+        stamps.append(named.group(1))
+    for stamp in stamps:
+        times.append(datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
+                     .replace(tzinfo=datetime.timezone.utc).timestamp())
+    return min(times)
+
+
 def select_backup_set(workspace, requested=None):
     workspace = pathlib.Path(workspace).resolve(strict=True)
     backup_root = (workspace / "backups").resolve(strict=True)
@@ -104,7 +123,7 @@ def select_backup_set(workspace, requested=None):
                 candidates.append(candidate.resolve(strict=True))
             except OSError:
                 continue
-        candidates.sort(key=lambda item: (item.stat().st_mtime_ns, item.name), reverse=True)
+    complete = []
     for candidate in candidates:
         if not _within(candidate, backup_root) or candidate.is_symlink() or not candidate.is_dir():
             continue
@@ -114,7 +133,9 @@ def select_backup_set(workspace, requested=None):
             "rabbitmq-game.tgz": 8 * 1024**3,
         }
         if all(_bounded_regular(candidate / name, maximum) for name, maximum in bounds.items()):
-            return candidate
+            complete.append((backup_created_epoch(candidate), candidate.name, candidate))
+    if complete:
+        return max(complete)[2]
     raise FileNotFoundError("no complete RabbitMQ backup set exists beneath backups/")
 
 
@@ -373,26 +394,49 @@ def _bounded_lines(value, limit=512):
     return lines
 
 
+COUNT_TOPOLOGY_SCRIPT = r'''
+set -eu
+mode="$1"
+shift
+value=$(rabbitmqctl -q --no-table-headers "$@")
+if [ "$mode" = messages ]; then
+    printf '%s\n' "$value" | awk '
+        NF { if (NF != 1 || $1 !~ /^[0-9]+$/) { bad=1; exit 1 }; rows++; total+=$1 }
+        END { if (!bad) printf "%.0f %.0f\n", rows, total }'
+else
+    printf '%s\n' "$value" | awk 'NF { rows++ } END { printf "%.0f\n", rows }'
+fi
+'''
+
+
+def _topology_count(docker, container, command, label, messages=False):
+    # Names and potentially large tables stay inside the disposable container.
+    output = _exec(docker, container, ["/bin/sh", "-c", COUNT_TOPOLOGY_SCRIPT,
+                                     "dash-rmq-count", "messages" if messages else "rows", *command], label)
+    lines = _bounded_lines(output, 1)
+    pattern = r"[0-9]+ [0-9]+" if messages else r"[0-9]+"
+    if len(lines) != 1 or not re.fullmatch(pattern, lines[0]):
+        raise RabbitMQRestoreDrillError("isolated RabbitMQ count output is invalid")
+    counts = [int(value) for value in lines[0].split()]
+    if any(value > 10**12 for value in counts):
+        raise RabbitMQRestoreDrillError("isolated RabbitMQ count exceeded its bound")
+    return counts
+
+
 def _topology(docker, container):
-    vhosts = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_vhosts", "name"], "vhost inventory"), 128)
+    vhosts = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "--no-table-headers", "list_vhosts", "name"], "vhost inventory"), 128)
     # RabbitMQ's list_users command has a fixed user/tags result shape and does
     # not accept a column selector (unlike the other list_* commands).
-    users = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_users"], "user inventory"), 256)
+    users = _topology_count(docker, container, ["list_users"], "user inventory")[0]
     if not vhosts or not users:
         raise RabbitMQRestoreDrillError("restored RabbitMQ lacks required vhost or user state")
-    totals = {"vhosts": len(vhosts), "users": len(users), "queues": 0, "exchanges": 0, "bindings": 0, "messages": 0}
+    totals = {"vhosts": len(vhosts), "users": users, "queues": 0, "exchanges": 0, "bindings": 0, "messages": 0}
     for vhost in vhosts:
-        queues = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_queues", "-p", vhost, "name", "messages"], "queue inventory"), 4096)
-        exchanges = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_exchanges", "-p", vhost, "name", "type", "durable"], "exchange inventory"), 4096)
-        bindings = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_bindings", "-p", vhost, "source_name", "destination_name"], "binding inventory"), 8192)
-        totals["queues"] += len(queues)
-        totals["exchanges"] += len(exchanges)
-        totals["bindings"] += len(bindings)
-        for line in queues:
-            try:
-                totals["messages"] += max(0, int(line.rsplit(None, 1)[1]))
-            except (IndexError, ValueError):
-                continue
+        queues, messages = _topology_count(docker, container, ["list_queues", "-p", vhost, "messages"], "queue inventory", messages=True)
+        totals["queues"] += queues
+        totals["messages"] += messages
+        totals["exchanges"] += _topology_count(docker, container, ["list_exchanges", "-p", vhost, "type"], "exchange inventory")[0]
+        totals["bindings"] += _topology_count(docker, container, ["list_bindings", "-p", vhost, "source_kind"], "binding inventory")[0]
     return totals
 
 
@@ -662,7 +706,7 @@ def run_drill(workspace, *, host_workspace=None, backup_set=None, receipt_root=N
         stage = receipt_root / f".stage-{identifier}"
         stage.mkdir(mode=0o700)
         host_stage = host_workspace / stage.relative_to(workspace)
-        age = max(0.0, started_epoch - selected.stat().st_mtime)
+        age = max(0.0, started_epoch - backup_created_epoch(selected))
         receipt = {"receiptSchema": 1, "id": identifier, "startedAt": _utc(started_epoch),
                    "backupSet": selected.relative_to(workspace).as_posix(), "backupAgeSeconds": round(age, 3),
                    "image": image, "liveRabbitMQTouched": False, "networkCreated": False,

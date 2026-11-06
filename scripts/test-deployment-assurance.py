@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import os
+import re
 import pathlib
 import subprocess
 import importlib.util
@@ -188,7 +190,130 @@ class DeploymentAssuranceTests(unittest.TestCase):
                 deployment_cli.generate("HEAD", explicit=["LICENSE"], reason="Mismatch fixture")
         selected = deployment_cli.selected_files("a" * 40, explicit=["LICENSE"])
         self.assertIn("admin/admin_panel.py", selected)
+        self.assertIn("scripts/lib/snape-curl-auth.sh", selected)
+        self.assertIn("admin/runtime_security.py", selected)
         self.assertTrue(deployment_cli.SUPPORT_FILES.issubset(set(selected)))
+
+    def test_status_exposes_digest_from_a_real_signed_window(self):
+        window = self.start()
+        row = self.store.status(now=1001)["openWindows"][0]
+        self.assertEqual(row["manifestSha256"], window["manifestSha256"])
+
+    def test_runtime_metadata_query_authenticates_existing_record_and_exposes_no_key_material(self):
+        window = self.start()
+        key = self.root / "fixture-secret"
+        key.write_bytes(self.secret)
+        key.chmod(0o600)
+        environment = {
+            **os.environ, "ADMIN_WORKSPACE": str(self.workspace),
+            "PYTHONPATH": str(ROOT / "admin"),
+            "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": str(self.store.root),
+            "DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR": str(self.store.evidence_root),
+            "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": str(key),
+        }
+        native_run = subprocess.run
+        def runtime(args, **kwargs):
+            self.assertEqual(args[:3], ["docker", "exec", "-i"])
+            return native_run([sys.executable, "-", args[-1]], input=kwargs["input"],
+                              env=environment, capture_output=True, text=True, timeout=5)
+        path = self.store._window_path(window["id"])
+        original = path.read_bytes()
+        with mock.patch.object(deployment_cli.subprocess, "run", side_effect=runtime):
+            result = deployment_cli.runtime_window_metadata(window["id"], "fixture-admin")
+            self.assertEqual(result["manifestSha256"], window["manifestSha256"])
+            self.assertEqual(set(result), {"id", "commit", "reason", "manifestSha256", "status"})
+            self.assertEqual(path.read_bytes(), original)
+            document = json.loads(original)
+            document["window"]["manifestSha256"] = "f" * 64
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, "HMAC verification failed"):
+                deployment_cli.runtime_window_metadata(window["id"], "fixture-admin")
+            key.unlink()
+            with self.assertRaises(ValueError):
+                deployment_cli.runtime_window_metadata(window["id"], "fixture-admin")
+            self.assertFalse(key.exists())
+
+    def test_legacy_status_recovery_requires_matching_verified_runtime_metadata(self):
+        recovery = self.shell_function("recover_start_response")
+        for valid_metadata in (True, False):
+            with self.subTest(valid_metadata=valid_metadata):
+                work = self.root / ("legacy-valid" if valid_metadata else "legacy-invalid")
+                work.mkdir()
+                code = work / "client/scripts"
+                code.mkdir(parents=True)
+                commit, digest = "a" * 40, "b" * 64
+                window_id = "deployment-window-" + "1" * 32
+                direct_id = "deployment-window-" + "2" * 32
+                metadata = {"id": window_id, "commit": commit, "reason": "reviewed fixture", "status": "open", "manifestSha256": digest if valid_metadata else "f" * 64}
+                (work / "metadata.json").write_text(json.dumps(metadata))
+                (code / "deployment-assurance.py").write_text("import json,pathlib\nprint((pathlib.Path(__file__).parents[2]/'metadata.json').read_text())\n")
+                (work / "manifest.json").write_text(json.dumps({"commit": commit, "manifestSha256": digest}))
+                row = {"id": window_id, "commit": commit, "reason": "reviewed fixture", "status": "open"}
+                (work / "status-1.json").write_text(json.dumps({"openWindows": [row]}))
+                (work / "status-2.json").write_text(json.dumps({"openWindows": [{**row, "id": direct_id, "manifestSha256": digest}]}))
+                fixture = '''set -e
+work="$FIXTURE_WORK"
+code_root="$work/client"
+admin_container=fixture-admin
+manifest="$work/manifest.json"
+reason="reviewed fixture"
+verification_timeout=60
+attempts=0
+api_get() { attempts=$((attempts + 1)); cat "$work/status-$attempts.json"; }
+api_post_file() { touch "$work/unexpected-post"; return 1; }
+sleep() { :; }
+''' + recovery + "\nrecover_start_response\n"
+                result = subprocess.run(["bash", "-c", fixture], env={**os.environ, "FIXTURE_WORK": str(work)}, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                recovered = json.loads((work / "start-response.json").read_text())
+                self.assertEqual(recovered["id"], window_id if valid_metadata else direct_id)
+                self.assertFalse((work / "unexpected-post").exists())
+
+    def shell_function(self, name):
+        source = (ROOT / "scripts/assured-control-plane-deploy.sh").read_text()
+        match = re.search(r"^" + name + r"\(\) \{\n.*?^\}", source, re.M | re.S)
+        self.assertIsNotNone(match)
+        return match.group(0)
+
+    def test_verification_wait_budget_is_bounded_and_does_not_evaluate_input(self):
+        source = 'read_env() { printf "%s" "$FIXTURE_TIMEOUT"; }\n' + self.shell_function("verification_timeout_seconds") + "\nverification_timeout_seconds\n"
+        marker = self.root / "must-not-exist"
+        for value, expected in [("", "1800"), ("60", "60"), ("0060", "60"), ("3600", "3600")]:
+            result = subprocess.run(["bash", "-c", source], env={**os.environ, "FIXTURE_TIMEOUT": value}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, expected)
+        for value in ["0", "59", "3601", "-1", "99999999999999999999999", f"1[$(touch {marker})]"]:
+            result = subprocess.run(["bash", "-c", source], env={**os.environ, "FIXTURE_TIMEOUT": value}, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
+
+    def test_start_recovery_waits_for_the_exact_manifest_without_resubmitting(self):
+        work = self.root / "recovery"
+        work.mkdir()
+        manifest = work / "manifest.json"
+        commit, digest = "a" * 40, "b" * 64
+        manifest.write_text(json.dumps({"commit": commit, "manifestSha256": digest}))
+        candidates = [
+            {"id": "wrong-commit", "commit": "c" * 40, "reason": "reviewed fixture", "manifestSha256": digest},
+            {"id": "wrong-manifest", "commit": commit, "reason": "reviewed fixture", "manifestSha256": "d" * 64},
+            {"id": "expected-window", "commit": commit, "reason": "reviewed fixture", "manifestSha256": digest},
+        ]
+        for index, candidate in enumerate(candidates, 1):
+            (work / f"status-{index}.json").write_text(json.dumps({"openWindows": [candidate]}))
+        fixture = '''set -e
+work="$FIXTURE_WORK"
+manifest="$work/manifest.json"
+reason="reviewed fixture"
+verification_timeout=60
+attempts=0
+api_get() { attempts=$((attempts + 1)); cat "$work/status-$attempts.json"; }
+api_post_file() { touch "$work/unexpected-post"; return 1; }
+sleep() { :; }
+''' + self.shell_function("recover_start_response") + "\nrecover_start_response\n"
+        result = subprocess.run(["bash", "-c", fixture], env={**os.environ, "FIXTURE_WORK": str(work)}, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((work / "start-response.json").read_text())["id"], "expected-window")
+        self.assertFalse((work / "unexpected-post").exists())
 
     def test_host_workflow_is_production_guarded_post_hook_safe_and_evidence_complete(self):
         source = (ROOT / "scripts" / "assured-control-plane-deploy.sh").read_text(encoding="utf-8")
@@ -230,14 +355,19 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertLess(wait_call, finish_request)
         self.assertLess(finish_request, finalize_call)
         self.assertLess(finalize_call, receipt_check)
+        self.assertNotIn('if [[ "$desired_state" != "attested" ]]', source)
+        self.assertLess(source.index('>"$work/seal-response.json"'), source.index('>"$work/certify-response.json"'))
         self.assertIn("credential lifecycle trust-state initialization failed", source)
-        self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index("/api/ops/desired-state 60"))
+        self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index('>"$work/desired.json"'))
         for phrase in (
             "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
             "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",
         ):
             self.assertIn(phrase, source)
         push = (ROOT / "scripts" / "push-assured-control-plane.sh").read_text(encoding="utf-8")
+        preflight = push.index('"$repo_root/scripts/deploy-admin-panel.sh" --test-only')
+        self.assertLess(push.index('verify --manifest "$manifest"'), preflight)
+        self.assertLess(preflight, push.index('ssh -o BatchMode=yes'))
         self.assertIn("/tmp/dash-assured-stage-", push)
         self.assertIn("tar -C \"$repo_root\" -czf -", push)
         self.assertIn("--stage $stage_q", push)

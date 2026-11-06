@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [--pre-change-backup DIR] [env-file]
+Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [--pre-change-backup DIR] [--enable-service-recovery] [env-file]
 
 Runs a production-host-only two-phase control-plane deployment. The workflow:
   1. verifies the exact commit/source manifest and a fresh pre-change backup;
@@ -24,12 +24,14 @@ env_file=".env"
 stage=""
 workspace=""
 pre_change_backup=""
+enable_service_recovery=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest) manifest="${2:-}"; shift 2 ;;
     --reason) reason="${2:-}"; shift 2 ;;
     --stage) stage="${2:-}"; shift 2 ;;
     --workspace) workspace="${2:-}"; shift 2 ;;
+    --enable-service-recovery) enable_service_recovery=true; shift ;;
     --pre-change-backup) pre_change_backup="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -58,6 +60,18 @@ read_env() {
   awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); print}' "$env_file" | tail -1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
 }
 
+verification_timeout_seconds() {
+  local value
+  value="$(read_env DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS)"
+  value="${value:-1800}"
+  if [[ ! "$value" =~ ^[0-9]{1,4}$ ]] || (( 10#$value < 60 || 10#$value > 3600 )); then
+    printf 'DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS must be 60..3600 seconds\n' >&2
+    return 1
+  fi
+  printf '%d' "$((10#$value))"
+}
+verification_timeout="$(verification_timeout_seconds)"
+
 command -v flock >/dev/null 2>&1 || { printf 'flock is required for assured deployment serialization\n' >&2; exit 1; }
 operation_lock="${DUNE_OPERATION_LOCK_FILE:-backups/admin-panel/operation.lock}"
 operation_lock_wait="${DUNE_OPERATION_LOCK_WAIT_SECONDS:-$(read_env DUNE_OPERATION_LOCK_WAIT_SECONDS)}"
@@ -76,6 +90,8 @@ token="$(read_env DUNE_ADMIN_TOKEN)"
 admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
 admin_port="${admin_port:-18080}"
 admin_url="http://127.0.0.1:${admin_port}"
+admin_project="$(read_env COMPOSE_PROJECT_NAME)"
+admin_container="${admin_project:-dune_server}-admin-panel-1"
 prometheus_port="$(read_env DUNE_METRICS_PROMETHEUS_PORT)"
 prometheus_port="${prometheus_port:-19090}"
 prometheus_url="http://127.0.0.1:${prometheus_port}"
@@ -105,18 +121,33 @@ api_get() {
 }
 
 api_post_file() {
-  curl -fsS --max-time "${2:-300}" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$1" "$admin_url/api/ops/deployment-assurance"
+  curl -fsS --max-time "${2:-$verification_timeout}" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$1" "$admin_url/api/ops/deployment-assurance"
 }
 
 recover_start_response() {
-  local deadline=$((SECONDS + 300))
+  local deadline=$((SECONDS + verification_timeout))
   while (( SECONDS <= deadline )); do
     if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
-      && python3 - "$work/deployment-status.json" "$manifest" "$reason" >"$work/start-response.json" <<'PY'
-import json, sys
+      && python3 - "$work/deployment-status.json" "$manifest" "$reason" "$code_root/scripts/deployment-assurance.py" "$admin_container" >"$work/start-response.json" <<'PY'
+import json, subprocess, sys
 status=json.load(open(sys.argv[1], encoding="utf-8"))
 manifest=json.load(open(sys.argv[2], encoding="utf-8"))
-matches=[row for row in status.get("openWindows") or [] if row.get("commit") == manifest.get("commit") and row.get("reason") == sys.argv[3]]
+matches=[]
+for candidate in status.get("openWindows") or []:
+    if candidate.get("commit") != manifest.get("commit") or candidate.get("reason") != sys.argv[3]:
+        continue
+    row=dict(candidate)
+    if not row.get("manifestSha256"):
+        try:
+            result=subprocess.run([sys.executable,sys.argv[4],"runtime-window","--window-id",str(row.get("id") or ""),"--container",sys.argv[5]],capture_output=True,text=True,timeout=45,check=True)
+            verified=json.loads(result.stdout)
+            if any(verified.get(key) != row.get(key) for key in ("id","commit","reason")) or verified.get("status") != "open":
+                continue
+            row["manifestSha256"]=verified.get("manifestSha256")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+    if row.get("manifestSha256") == manifest.get("manifestSha256"):
+        matches.append(row)
 if len(matches) != 1:
     raise SystemExit(1)
 print(json.dumps(matches[0]))
@@ -237,13 +268,12 @@ PY
 
 finalize_assurance_when_healthy() {
   local timeout interval deadline state failed_health
-  timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
+  timeout="$verification_timeout"
   interval="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS)"
-  timeout="${timeout:-300}"
   interval="${interval:-5}"
   deadline=$((SECONDS + timeout))
   while (( SECONDS <= deadline )); do
-    if ! api_post_file "$work/finish.json" 600 >"$work/finish-response.json"; then
+    if ! api_post_file "$work/finish.json" "$verification_timeout" >"$work/finish-response.json"; then
       if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
         && python3 - "$work/deployment-status.json" "$window_id" "$reason" >"$work/finish-response.json" <<'PY'
 import json, sys
@@ -325,7 +355,7 @@ import json,sys
 document=json.load(open(sys.argv[1],encoding="utf-8"))
 print(json.dumps({"action":"start","commit":document["commit"],"reason":sys.argv[2],"manifest":document,"preChangeBackupPath":sys.argv[3],"sourceRollbackArchive":sys.argv[4],"sourceRollbackSha256":sys.argv[5],"staged":sys.argv[6]=="true","confirm":"START ASSURED CHANGE WINDOW"}))
 PY
-if ! api_post_file "$work/start.json" 300 >"$work/start-response.json" \
+if ! api_post_file "$work/start.json" "$verification_timeout" >"$work/start-response.json" \
   || ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/start-response.json"; then
   recover_start_response
 fi
@@ -346,6 +376,11 @@ if [[ -n "$stage" ]]; then
   rm -f "$apply_lock"
   apply_lock=""
 fi
+if [[ "$enable_service_recovery" == true ]]; then
+  ./scripts/install-dune-restart-api.sh "$env_file" --reload-idle --enable-recovery
+elif [[ "$(read_env DUNE_ADMIN_SERVICE_CONTROL_ENABLED)" == true ]]; then
+  ./scripts/install-dune-restart-api.sh "$env_file" --reload-idle
+fi
 ./scripts/deploy-admin-panel.sh "$env_file"
 prometheus_id="$(docker ps -q --filter "label=com.docker.compose.project=dune_server" --filter "label=com.docker.compose.service=prometheus" | head -1)"
 if [[ -n "$prometheus_id" ]]; then
@@ -356,7 +391,7 @@ fi
 # Initialize and verify the credential observation trust state before Desired
 # State is reviewed. Otherwise the first readiness certification could create
 # the HMAC key/database/anchor after sealing and immediately cause source drift.
-api_get '/api/ops/credential-lifecycle?refresh=true' 60 >"$work/credential-lifecycle.json"
+api_get '/api/ops/credential-lifecycle?refresh=true' "$verification_timeout" >"$work/credential-lifecycle.json"
 python3 - "$work/credential-lifecycle.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1],encoding="utf-8")); history=d.get("history") or {}
@@ -370,27 +405,22 @@ if not all(checks.values()): raise SystemExit("credential lifecycle trust-state 
 print(f"credential lifecycle initialized: {history.get('events',0)} events; authenticated head valid")
 PY
 
-api_get /api/ops/desired-state 60 >"$work/desired.json"
-desired_state="$(python3 - "$work/desired.json" <<'PY'
-import json,sys
-d=json.load(open(sys.argv[1])); print(d.get("state", "unknown"))
-PY
-)"
-if [[ "$desired_state" != "attested" ]]; then
-  python3 - "$reason" >"$work/seal.json" <<'PY'
+api_get /api/ops/desired-state "$verification_timeout" >"$work/desired.json"
+# A newly started monitor may still report the previous observation as attested.
+# Always seal the reviewed manifest after applying it, before certifying readiness.
+python3 - "$reason" >"$work/seal.json" <<'PYSEAL'
 import json,sys
 print(json.dumps({"action":"seal","reason":"Assured deployment: " + sys.argv[1],"confirm":"SEAL DESIRED STATE"}))
-PY
-  curl -fsS --max-time 120 -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
-fi
+PYSEAL
+curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
 
-api_get /api/ops/change-intelligence 60 >"$work/change.json"
+api_get /api/ops/change-intelligence "$verification_timeout" >"$work/change.json"
 python3 - "$work/change.json" >"$work/certify.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); policy=d["policy"]["response"]["policySha256"]
 print(json.dumps({"policySha256":policy,"confirm":"CERTIFY INCIDENT RESPONSE READINESS"}))
 PY
-curl -fsS --max-time 300 -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/certify.json" "$admin_url/api/ops/change-intelligence/certify" >"$work/certify-response.json"
+curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/certify.json" "$admin_url/api/ops/change-intelligence/certify" >"$work/certify-response.json"
 python3 - "$work/certify-response.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); s=d.get("summary") or {}

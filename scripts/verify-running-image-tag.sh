@@ -68,15 +68,37 @@ if [[ "$missing_images" -ne 0 ]]; then
   exit 1
 fi
 
+game_override="${DUNE_GAME_IMAGE-$(env_value DUNE_GAME_IMAGE)}"
+runtime_image_id=""
+if [[ -n "$game_override" ]]; then
+  runtime_check="$(python3 "$script_dir/runtime-security.py" "$env_file" --expected-tag "$expected_tag")"
+  runtime_image_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("imageId", ""))' "$runtime_check")"
+fi
+
 checked=0
 mismatches=0
 while IFS=$'\t' read -r container_id service; do
   [[ -n "$container_id" ]] || continue
   image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+  if [[ -n "$runtime_image_id" && "$image" == "$game_override" ]]; then
+    checked=$((checked + 1))
+    actual_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+    if [[ "$actual_id" != "$runtime_image_id" ]]; then
+      printf 'runtime security image mismatch: service=%s\n' "$service" >&2
+      mismatches=$((mismatches + 1))
+    fi
+    continue
+  fi
   repository="${image%:*}"
   tag="${image##*:}"
 
   case "$repository:$service" in
+    snape/dune-server:*)
+      printf 'unapproved runtime security image: service=%s\n' "$service" >&2
+      checked=$((checked + 1))
+      mismatches=$((mismatches + 1))
+      continue
+      ;;
     registry.funcom.com/funcom/self-hosting/seabass-server:*) ;;
     registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:director) ;;
     registry.funcom.com/funcom/self-hosting/seabass-server-gateway:gateway) ;;

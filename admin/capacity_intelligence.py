@@ -116,6 +116,9 @@ class Store:
         else:
             connection = sqlite3.connect(self.database, timeout=10)
         connection.row_factory = sqlite3.Row
+        # Bound read-only page mappings; retain all SQL, HMAC and write checks.
+        # Unsupported SQLite builds silently retain ordinary page reads.
+        connection.execute("pragma mmap_size=1073741824")
         connection.execute("pragma busy_timeout=10000")
         connection.execute("pragma foreign_keys=on")
         if not readonly:

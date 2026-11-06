@@ -1,5 +1,5 @@
 [Unit]
-Description=Constrained Dune map-restart API
+Description=Constrained Dune restart and recovery API
 Requires=dune-restart-api.socket
 After=dune-restart-api.socket network-online.target
 Wants=network-online.target
@@ -11,15 +11,20 @@ Group=DUNE_SERVICE_GROUP_PLACEHOLDER
 SupplementaryGroups=docker
 WorkingDirectory=DUNE_RESTART_API_ROOT_PLACEHOLDER
 Environment=DUNE_RESTART_API_ENV_FILE=DUNE_RESTART_API_ENV_PLACEHOLDER
+Environment=DUNE_RESTART_API_EXPECTED_HOSTNAME=DUNE_RESTART_API_HOST_PLACEHOLDER
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ExecStart=/usr/bin/python3 DUNE_RESTART_API_ROOT_PLACEHOLDER/scripts/dune_restart_api.py
 Restart=on-failure
 RestartSec=2
 TimeoutStartSec=15
-TimeoutStopSec=15
+TimeoutStopSec=10800
+# Drain the Python workers before terminating their native child commands.
+KillMode=mixed
 LimitNOFILE=128
 TasksMax=128
-MemoryMax=256M
+MemoryMax=2G
+StateDirectory=dune-restart-api
+StateDirectoryMode=0700
 NoNewPrivileges=true
 # Required only for the existing map network-capacity/LAN-reflection preflight.
 # Keep the service's ambient and bounding capability sets limited to this bit.

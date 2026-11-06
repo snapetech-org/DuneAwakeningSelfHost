@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+server_saved_tar_options=(--exclude=Logs)
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
@@ -377,6 +378,7 @@ import sys
 
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 target = sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
@@ -395,6 +397,7 @@ import sys
 
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 target = sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
@@ -412,6 +415,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("base gallery snapshot failed integrity_check")
@@ -427,6 +431,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("operational SLO snapshot failed integrity_check")
@@ -442,6 +447,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("capacity intelligence snapshot failed integrity_check")
@@ -457,6 +463,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("desired-state snapshot failed integrity_check")
@@ -472,6 +479,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("change-intelligence snapshot failed integrity_check")
@@ -487,6 +495,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("feature-readiness history snapshot failed integrity_check")
@@ -502,6 +511,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("alert inbox snapshot failed integrity_check")
@@ -517,6 +527,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("peer-watch snapshot failed integrity_check")
@@ -556,6 +567,7 @@ for attempt in range(5):
     target_db.unlink(missing_ok=True)
     source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
     target=sqlite3.connect(target_db)
+    target.execute("pragma mmap_size=1073741824")
     try:
         source.backup(target)
         if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise RuntimeError("credential lifecycle snapshot failed integrity_check")
@@ -582,6 +594,7 @@ import sys
 source_db, source_key, target_db, target_key = map(pathlib.Path, sys.argv[1:])
 source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
 target=sqlite3.connect(target_db)
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("change approval snapshot failed integrity_check")
@@ -644,10 +657,10 @@ if "${compose[@]}" ps --services --filter status=running | grep -qx game-rmq; th
 fi
 
 if "${compose[@]}" ps --services --filter status=running | grep -qx survival; then
-  "${compose[@]}" exec -T survival tar -czf - -C /home/dune/server/DuneSandbox/Saved . \
+  "${compose[@]}" exec -T survival tar "${server_saved_tar_options[@]}" -czf - -C /home/dune/server/DuneSandbox/Saved . \
     > "${backup_dir}/server-saved.tgz"
 elif [[ -d data/server-saved ]]; then
-  tar -czf "${backup_dir}/server-saved.tgz" data/server-saved
+  tar "${server_saved_tar_options[@]}" -czf "${backup_dir}/server-saved.tgz" data/server-saved
 fi
 
 cat > "${backup_dir}/manifest.txt" <<EOF
@@ -661,6 +674,7 @@ postgres_dump=postgres-${db}.dump
 rabbitmq_admin_archive=rabbitmq-admin.tgz
 rabbitmq_game_archive=rabbitmq-game.tgz
 server_saved_archive=server-saved.tgz
+server_saved_excludes=Logs
 config_archive=config.tgz
 config_tls_archive=config-tls.tgz
 community_rewards_snapshot=${community_snapshot}

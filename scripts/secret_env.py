@@ -8,9 +8,10 @@ import stat
 import tempfile
 
 
-def read_secret_env(name: str, default: str = "") -> str:
+def read_secret_env(name: str, default: str = "", *, environment=None) -> str:
     """Read NAME_FILE first, failing closed when that path is configured."""
-    file_value = os.environ.get(f"{name}_FILE", "").strip()
+    source = os.environ if environment is None else environment
+    file_value = source.get(f"{name}_FILE", "").strip()
     if file_value:
         path = pathlib.Path(file_value)
         try:
@@ -29,7 +30,7 @@ def read_secret_env(name: str, default: str = "") -> str:
             return raw.decode("utf-8")
         except UnicodeDecodeError:
             raise ValueError(f"{name}_FILE must contain UTF-8 text") from None
-    value = os.environ.get(name)
+    value = source.get(name)
     return value if value is not None else default
 
 

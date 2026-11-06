@@ -851,7 +851,7 @@ def main(argv=None) -> int:
     env_path = pathlib.Path(env_file)
     env_values = read_env_file(env_path)
     env_values.update({key: value for key, value in os.environ.items() if key in {
-        "DUNE_IMAGE_TAG", "COMPOSE_PROFILES", "DUNE_WORLD_PARTITION_COUNT",
+        "DUNE_IMAGE_TAG", "DUNE_GAME_IMAGE", "COMPOSE_PROFILES", "DUNE_WORLD_PARTITION_COUNT",
         "GAME_UDP_PORT_RANGE", "IGW_UDP_PORT_RANGE",
         "DUNE_MAP_NETWORK_GROWTH_STEP", "DUNE_MAP_NETWORK_GAME_PORT_MIN",
         "DUNE_MAP_NETWORK_IGW_PORT_MAX",
