@@ -20,6 +20,10 @@ The shared inventory continues to govern private JIT jobs. For a private route,
 verify source routing, broker policy, runner-group access and live capacity
 before relying on it.
 
+The repo-specific owner directive above supersedes the older organization-wide
+private-only policy. CodeQL remains disabled; retain the other security scans
+and their reports.
+
 # Agent instructions - DuneAwakeningSelfHost
 
 ## Operational target safety

@@ -76,3 +76,22 @@ packaging, restart/API routing, Compose discovery and public-site rendering.
 The public-site asset checks and Nginx configuration/header checks also passed.
 Raw evidence, individual GitHub dismissal rationales and scan-upload receipts
 are retained in the private evidence directory above.
+
+## Validation reconciliation
+
+Full local validation target groups were exercised in an isolated worktree.
+Repairs retain network-isolated broker admission, update stale secret-handling
+fixtures without permitting plaintext command-line credentials, and stage the
+real map-catalog helper in the public-IP canary. That canary only permits a
+mock read-only Compose model query and still rejects any lifecycle Docker call.
+Its signed inputs and deployment support lists bind the new helper. Timer
+verification follows the current OnUnitInactiveSec schedule.
+
+The README images were recaptured from sanitized fixtures in an isolated,
+headed browser on the persistent GUI VM, visually checked at 1440 by 1000,
+and bound to the current UI/capture-script hashes. The browser session and
+fixture server were closed afterward.
+
+A concurrent branch restored the former private-only runner policy. Its history
+was merged, while the November 3 repo-specific hosted-runner owner directive
+supplied in this session remains authoritative. CodeQL stays disabled.
