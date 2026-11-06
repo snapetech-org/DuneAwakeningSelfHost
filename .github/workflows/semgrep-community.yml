@@ -37,10 +37,10 @@ jobs:
       - name: Report finding count
         if: always() && hashFiles('semgrep.json') != ''
         run: |
-          jq -r '"Semgrep CE reported \(.results | length) finding(s). Review semgrep.sarif and the scan log."' semgrep.json
+          jq -r '"Semgrep CE reported \(.results | length) finding(s). Review the job log and JSON report."' semgrep.json
 
-      - name: Retain scan report
-        if: always() && hashFiles('semgrep.sarif') != ''
+      - name: Retain Semgrep scan reports
+        if: always() && (hashFiles('semgrep.json') != '' || hashFiles('semgrep.sarif') != '')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scan-report-semgrep-${{ github.run_id }}-${{ github.run_attempt }}
