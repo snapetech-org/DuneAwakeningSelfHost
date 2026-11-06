@@ -5,6 +5,7 @@ import copy
 import fcntl
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import pathlib
@@ -37,12 +38,15 @@ def rollout(runtime, execute=False):
             runtime.post_hooks()
             runtime.wait_healthy()
         runtime.reapprove()
-        return {**plan, 'changed': True, 'backup': backup, 'running': plan['running']}
     except Exception:
         # A new player, unknown count or unexpected container identity blocks
         # rollback as well. Never overwrite live work to manufacture success.
         runtime.rollback()
         raise
+    # A failed attestation leaves the qualified, healthy image in place. It
+    # must not roll back a worker to hide unrelated configuration drift.
+    runtime.attest_image_transition()
+    return {**plan, 'changed': True, 'backup': backup, 'running': plan['running']}
 
 
 class Native:
@@ -219,6 +223,36 @@ class Native:
         control.approve_configuration(self.root, self.env_file, self.admission.policy_path.parent, self.maps, self.admission.expected_hostname)
         self.admission.same_image(self.service)
         self.record('recovery-approval-refreshed', running=self.running)
+
+    def attest_image_transition(self):
+        self.admission.same_image(self.service)
+        configured = dict(self.admission.values)
+        if configured.get('DUNE_ADMIN_TOKEN_FILE'):
+            configured['DUNE_ADMIN_TOKEN_FILE'] = str(self.admission.host_path(configured['DUNE_ADMIN_TOKEN_FILE'], ''))
+        token = control.read_secret_env('DUNE_ADMIN_TOKEN', environment=configured)
+        port = configured.get('DUNE_ADMIN_HOST_PORT') or '18080'
+        if not token or not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise control.Blocked('native-admin-configuration-unavailable')
+        transition = {'service': self.service, 'fromImageId': self.original['Image'],
+                      'fromImageRef': self.original['Config']['Image'],
+                      'toImageId': self.approval['imageId'], 'toImageRef': self.approval['image']}
+        payload = {'action': 'seal', 'confirm': 'SEAL DESIRED STATE',
+                   'reason': 'Verified native runtime rollout ' + self.job + ': ' + self.reason,
+                   'runtimeImageTransition': transition}
+        connection = http.client.HTTPConnection('127.0.0.1', int(port), timeout=1800)
+        try:
+            connection.request('POST', '/api/ops/desired-state', body=json.dumps(payload),
+                               headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            raw = response.read(2 * 1024 * 1024 + 1)
+            if response.status != 200 or len(raw) > 2 * 1024 * 1024:
+                raise control.Blocked('runtime-image-attestation-rejected')
+            result = json.loads(raw)
+            if result.get('ok') is not True or not result.get('baselineId'):
+                raise control.Blocked('runtime-image-attestation-unverified')
+        finally:
+            connection.close()
+        self.record('runtime-image-transition-attested', baselineId=result['baselineId'])
 
     def rollback(self):
         self.admission.players()

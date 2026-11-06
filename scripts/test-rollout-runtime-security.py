@@ -40,6 +40,7 @@ class Fake:
     def post_hooks(self): self.call('hooks')
     def reapprove(self): self.call('approve')
     def rollback(self): self.call('rollback')
+    def attest_image_transition(self): self.call('attest')
 
 
 class RolloutTests(unittest.TestCase):
@@ -67,12 +68,12 @@ class RolloutTests(unittest.TestCase):
     def test_live_worker_checks_health_before_and_after_native_hooks(self):
         runtime = Fake()
         self.assertTrue(CLI.rollout(runtime, True)['changed'])
-        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'network', 'health', 'hooks', 'health', 'approve'])
+        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'network', 'health', 'hooks', 'health', 'approve', 'attest'])
 
     def test_stopped_worker_is_replaced_without_start_or_post_start_hooks(self):
         runtime = Fake(running=False)
         self.assertFalse(CLI.rollout(runtime, True)['running'])
-        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'approve'])
+        self.assertEqual(runtime.calls, ['preflight', 'backup', 'gates', 'recreate', 'verify', 'approve', 'attest'])
 
     def test_every_pre_mutation_failure_preserves_worker(self):
         for failure in ('preflight', 'backup', 'gates'):
@@ -88,6 +89,13 @@ class RolloutTests(unittest.TestCase):
             with self.subTest(failure=failure), self.assertRaises(CLI.control.Blocked):
                 CLI.rollout(runtime, True)
             self.assertEqual(runtime.calls[-1], 'rollback')
+
+    def test_attestation_failure_preserves_healthy_candidate_and_drift(self):
+        runtime = Fake(fail='attest')
+        with self.assertRaises(CLI.control.Blocked):
+            CLI.rollout(runtime, True)
+        self.assertEqual(runtime.calls[-1], 'attest')
+        self.assertNotIn('rollback', runtime.calls)
 
     def test_runtime_bound_receipt_is_required_before_lifecycle(self):
         runtime = object.__new__(CLI.Native)

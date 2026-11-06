@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import stat
 import time
@@ -257,6 +258,33 @@ def compare_snapshots(baseline, current):
     return changes
 
 
+def validate_runtime_transition(baseline, current, transition):
+    required = {'service', 'fromImageId', 'fromImageRef', 'toImageId', 'toImageRef'}
+    if not isinstance(transition, dict) or set(transition) != required:
+        raise ValueError('complete runtime image transition required')
+    service = transition['service']
+    if not isinstance(service, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', service):
+        raise ValueError('invalid runtime transition service')
+    if not all(isinstance(transition[key], str) and re.fullmatch(r'sha256:[0-9a-f]{64}', transition[key]) for key in ('fromImageId', 'toImageId')):
+        raise ValueError('immutable runtime image identities required')
+    before = (baseline.get('containers') or {}).get(service)
+    after = (current.get('containers') or {}).get(service)
+    if not before or not after:
+        raise ValueError('existing runtime service required')
+    if (after.get('imageId'), after.get('imageRef')) != (transition['toImageId'], transition['toImageRef']):
+        raise ValueError('runtime candidate identity changed')
+    changes = compare_snapshots(baseline, current)
+    if not changes and before == after:
+        return
+    if (before.get('imageId'), before.get('imageRef')) != (transition['fromImageId'], transition['fromImageRef']):
+        raise ValueError('runtime source identity changed')
+    if len(changes) != 1 or changes[0]['category'] != 'containers' or changes[0]['subject'] != service or changes[0]['change'] != 'modified':
+        raise ValueError('unrelated desired-state drift blocks runtime attestation')
+    fields = set(changes[0]['details']['changedFields'])
+    if not fields <= {'fingerprint', 'imageId', 'imageRef'} or 'imageId' not in fields:
+        raise ValueError('runtime settings changed beyond the approved image')
+
+
 class Store:
     def __init__(self, database, policy, secret_file, owner_uid=None, owner_gid=None):
         self.database = pathlib.Path(database)
@@ -389,7 +417,7 @@ class Store:
         )
         return signature
 
-    def seal(self, snapshot, actor, reason, at=None):
+    def seal(self, snapshot, actor, reason, at=None, *, runtime_transition=None):
         actor = str(actor or "").strip()[:128]
         reason = str(reason or "").strip()[:1000]
         if not actor or not reason:
@@ -404,6 +432,13 @@ class Store:
         try:
             connection.execute("begin immediate")
             prior = connection.execute("select id from baselines where active=1").fetchone()
+            if runtime_transition is not None:
+                if not self.verify(connection).get('ok'):
+                    raise ValueError('desired-state integrity blocks runtime attestation')
+                baseline = self.active_baseline(connection)
+                if baseline is None:
+                    raise ValueError('sealed baseline required for runtime attestation')
+                validate_runtime_transition(baseline['snapshot'], snapshot_payload, runtime_transition)
             if prior:
                 connection.execute("update baselines set active=0 where id=?", (prior["id"],))
             connection.execute(

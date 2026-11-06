@@ -10011,11 +10011,12 @@ def desired_state_public_status(*, force=False, allow_stale=False):
     return status
 
 
-def desired_state_seal(actor, reason):
+def desired_state_seal(actor, reason, runtime_transition=None):
     snapshot = collect_desired_state_snapshot()
     store = desired_state_store()
     open_findings = [row["id"] for row in store.status(limit=1000).get("openFindings") or []]
-    result = store.seal(snapshot, actor, reason)
+    kwargs = {"runtime_transition": runtime_transition} if runtime_transition is not None else {}
+    result = store.seal(snapshot, actor, reason, **kwargs)
     store.observe(snapshot, maintenance_active=desired_state_maintenance_active())
     invalidate_desired_state_status_cache()
     for finding_id in open_findings:
@@ -14670,7 +14671,11 @@ class Handler(BaseHTTPRequestHandler):
                 actor = str(principal.get("id") or "owner-recovery")
                 if action == "seal":
                     require_confirmation(body, CONFIRM_DESIRED_STATE_SEAL)
-                    result = desired_state_seal(actor, body.get("reason"))
+                    transition = body.get("runtimeImageTransition")
+                    if transition is None:
+                        result = desired_state_seal(actor, body.get("reason"))
+                    else:
+                        result = desired_state_seal(actor, body.get("reason"), runtime_transition=transition)
                 elif action == "acknowledge":
                     require_confirmation(body, CONFIRM_DESIRED_STATE_ACK)
                     result = desired_state_store().acknowledge(body.get("findingId"), actor, body.get("note", ""))

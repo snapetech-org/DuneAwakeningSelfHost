@@ -99,3 +99,12 @@ review; the CLI never restores a live database automatically. Recreated IDs are
 reapproved through the native existing-container recovery policy. Each attempt
 retains a private HMAC-signed job record. No HTTP route gains image-promotion
 or approval authority. Stop after a failed canary and retain its evidence.
+
+After successful native verification, the CLI attests the exact image transition
+through a restricted desired-state seal. The store verifies its signed baseline
+and compares the fresh complete snapshot inside the baseline transaction. Only
+the selected existing container's image ID, image reference, and derived
+fingerprint may change. File changes, environment, mounts, commands, resource
+settings, or another container block attestation. A blocked attestation retains
+the healthy candidate and reports the drift; it does not roll the worker back
+to conceal an unrelated change. No HTTP route starts or replaces a game worker.

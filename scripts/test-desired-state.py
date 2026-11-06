@@ -69,6 +69,54 @@ class DesiredStateTests(unittest.TestCase):
     def snapshot(self, containers=None, at=1000):
         return desired_state.build_snapshot(self.root, self.store.policy, containers if containers is not None else [container()], self.store.secret, observed_at=at)
 
+    def runtime_transition(self):
+        return {'service': 'worker', 'fromImageId': 'sha256:'+'a'*64,
+                'fromImageRef': 'vendor:v1', 'toImageId': 'sha256:'+'b'*64,
+                'toImageRef': 'qualified:v2'}
+
+    def test_runtime_attestation_seals_only_exact_image_transition(self):
+        old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
+        new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)
+        baseline = self.store.seal(self.snapshot([old]), 'operator', 'initial')
+        current = self.snapshot([new], at=1001)
+        self.store.observe(current, at=1001)
+        self.assertTrue(self.store.status()['openFindings'])
+        result = self.store.seal(current, 'operator', 'verified image', runtime_transition=self.runtime_transition())
+        self.assertNotEqual(result['baselineId'], baseline['baselineId'])
+        self.assertFalse(self.store.status()['openFindings'])
+        self.assertTrue(self.store.verify()['ok'])
+
+    def test_runtime_attestation_rejects_unrelated_settings_and_preserves_baseline(self):
+        old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
+        baseline = self.store.seal(self.snapshot([old]), 'operator', 'initial')
+        for field in ('environment', 'mount', 'command', 'memory', 'file', 'other-container'):
+            with self.subTest(field=field):
+                new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)
+                raw = [new]
+                if field == 'environment': new['Config']['Env'].append('UNREVIEWED=value')
+                if field == 'mount': new['Mounts'][0]['RW'] = True
+                if field == 'command': new['Config']['Cmd'].append('--unreviewed')
+                if field == 'memory': new['HostConfig']['Memory'] += 1
+                if field == 'file': (self.root/'compose.yaml').write_text('services: {changed: {}}')
+                if field == 'other-container': raw.append(container(service='other'))
+                current = self.snapshot(raw, at=1001)
+                self.store.observe(current, at=1001)
+                with self.assertRaises(ValueError):
+                    self.store.seal(current, 'operator', 'reject unrelated drift', runtime_transition=self.runtime_transition())
+                self.assertEqual(self.store.active_baseline()['id'], baseline['baselineId'])
+                self.assertTrue(self.store.status()['openFindings'])
+                (self.root/'compose.yaml').write_text('services: {}\n')
+
+    def test_runtime_attestation_rejects_wrong_source_or_candidate(self):
+        old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
+        new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)
+        self.store.seal(self.snapshot([old]), 'operator', 'initial')
+        for field in ('fromImageId', 'toImageId', 'service'):
+            transition = self.runtime_transition()
+            transition[field] = 'different' if field == 'service' else 'sha256:'+'c'*64
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.store.seal(self.snapshot([new]), 'operator', 'wrong identity', runtime_transition=transition)
+
     def test_policy_secret_and_private_modes(self):
         self.assertEqual(self.store.policy["pollSeconds"], 60)
         self.assertEqual(self.database.stat().st_mode & 0o777, 0o600)
