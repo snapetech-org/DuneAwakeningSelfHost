@@ -43,6 +43,7 @@ def snapshot(source_database, source_key, source_anchor, destination, attempts=5
             source = sqlite3.connect(f"file:{source_database}?mode=ro", uri=True)
             target = sqlite3.connect(target_database)
             try:
+                target.execute("pragma mmap_size=1073741824")
                 source.backup(target)
                 if target.execute("pragma integrity_check").fetchone()[0] != "ok":
                     raise RuntimeError("audit ledger snapshot failed SQLite integrity_check")

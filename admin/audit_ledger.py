@@ -467,6 +467,7 @@ class Store:
                 shutil.copyfile(self.key_path, destination_key)
                 shutil.copyfile(self.anchor_path, destination_anchor)
                 with closing(self._connect()) as source, closing(sqlite3.connect(destination_database)) as target:
+                    target.execute("pragma mmap_size=1073741824")
                     source.backup(target)
                     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
                         raise RuntimeError("audit ledger backup failed SQLite integrity_check")
