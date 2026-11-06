@@ -384,7 +384,7 @@ fi
 # Initialize and verify the credential observation trust state before Desired
 # State is reviewed. Otherwise the first readiness certification could create
 # the HMAC key/database/anchor after sealing and immediately cause source drift.
-api_get '/api/ops/credential-lifecycle?refresh=true' 60 >"$work/credential-lifecycle.json"
+api_get '/api/ops/credential-lifecycle?refresh=true' "$verification_timeout" >"$work/credential-lifecycle.json"
 python3 - "$work/credential-lifecycle.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1],encoding="utf-8")); history=d.get("history") or {}
@@ -398,7 +398,7 @@ if not all(checks.values()): raise SystemExit("credential lifecycle trust-state 
 print(f"credential lifecycle initialized: {history.get('events',0)} events; authenticated head valid")
 PY
 
-api_get /api/ops/desired-state 60 >"$work/desired.json"
+api_get /api/ops/desired-state "$verification_timeout" >"$work/desired.json"
 desired_state="$(python3 - "$work/desired.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); print(d.get("state", "unknown"))
@@ -409,16 +409,16 @@ if [[ "$desired_state" != "attested" ]]; then
 import json,sys
 print(json.dumps({"action":"seal","reason":"Assured deployment: " + sys.argv[1],"confirm":"SEAL DESIRED STATE"}))
 PY
-  curl -fsS --max-time 120 -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
+  curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/seal.json" "$admin_url/api/ops/desired-state" >"$work/seal-response.json"
 fi
 
-api_get /api/ops/change-intelligence 60 >"$work/change.json"
+api_get /api/ops/change-intelligence "$verification_timeout" >"$work/change.json"
 python3 - "$work/change.json" >"$work/certify.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); policy=d["policy"]["response"]["policySha256"]
 print(json.dumps({"policySha256":policy,"confirm":"CERTIFY INCIDENT RESPONSE READINESS"}))
 PY
-curl -fsS --max-time 300 -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/certify.json" "$admin_url/api/ops/change-intelligence/certify" >"$work/certify-response.json"
+curl -fsS --max-time "$verification_timeout" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$work/certify.json" "$admin_url/api/ops/change-intelligence/certify" >"$work/certify-response.json"
 python3 - "$work/certify-response.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); s=d.get("summary") or {}

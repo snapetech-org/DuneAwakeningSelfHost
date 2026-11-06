@@ -173,11 +173,16 @@ and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
 helper is accepted from the stage.
 
-Backup validation can take minutes on busy storage. Start and finish requests
-use a bounded `DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS` budget
+Backup and attestation validation can take minutes on busy storage. Start,
+finish, credential trust initialization, Desired State reads/sealing, and
+incident-readiness reads/certification use the same bounded
+`DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS` budget
 (default 1800 seconds; permitted range 60–3600). This changes the transport wait,
 not the validation or health gates. Start-response recovery also requires the
 exact manifest digest, commit, and reason before adopting a durable window.
+Shorter fixed waits previously abandoned a Desired State seal while its retained
+history checks were still running. The shared bound prevents that premature
+failure without accepting an incomplete seal or certification.
 Older status responses omit the manifest digest. The client then reads only
 public window metadata through the running Admin verifier, which authenticates
 the existing record with its configured HMAC key. Keys and signatures stay in

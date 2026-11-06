@@ -356,7 +356,7 @@ sleep() { :; }
         self.assertLess(finish_request, finalize_call)
         self.assertLess(finalize_call, receipt_check)
         self.assertIn("credential lifecycle trust-state initialization failed", source)
-        self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index("/api/ops/desired-state 60"))
+        self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index('>"$work/desired.json"'))
         for phrase in (
             "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
             "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",
