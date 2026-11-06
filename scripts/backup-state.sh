@@ -378,6 +378,7 @@ import sys
 
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 target = sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
@@ -396,6 +397,7 @@ import sys
 
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 target = sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
@@ -413,6 +415,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("base gallery snapshot failed integrity_check")
@@ -428,6 +431,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("operational SLO snapshot failed integrity_check")
@@ -443,6 +447,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("capacity intelligence snapshot failed integrity_check")
@@ -458,6 +463,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("desired-state snapshot failed integrity_check")
@@ -473,6 +479,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("change-intelligence snapshot failed integrity_check")
@@ -488,6 +495,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("feature-readiness history snapshot failed integrity_check")
@@ -503,6 +511,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("alert inbox snapshot failed integrity_check")
@@ -518,6 +527,7 @@ import sqlite3
 import sys
 source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
 target=sqlite3.connect(sys.argv[2])
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("peer-watch snapshot failed integrity_check")
@@ -557,6 +567,7 @@ for attempt in range(5):
     target_db.unlink(missing_ok=True)
     source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
     target=sqlite3.connect(target_db)
+    target.execute("pragma mmap_size=1073741824")
     try:
         source.backup(target)
         if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise RuntimeError("credential lifecycle snapshot failed integrity_check")
@@ -583,6 +594,7 @@ import sys
 source_db, source_key, target_db, target_key = map(pathlib.Path, sys.argv[1:])
 source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
 target=sqlite3.connect(target_db)
+target.execute("pragma mmap_size=1073741824")
 try:
     source.backup(target)
     if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("change approval snapshot failed integrity_check")
