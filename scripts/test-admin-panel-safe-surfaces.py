@@ -131,6 +131,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             encoding="utf-8",
         )
         (self.workspace / ".env").write_text("", encoding="utf-8")
+        # Restart phase tests still exercise the real current-build admission.
+        # Their fixture represents a staged package matching the loaded build.
+        build_check = self.workspace / "scripts" / "check-steam-update.sh"
+        build_check.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        build_check.chmod(0o755)
         self.panel = load_admin_panel(self.workspace)
         # Existing route tests isolate their route-specific gate. Focused tests
         # below exercise the additional exact-body change-contract admission.
@@ -155,12 +160,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "DUNE_ADMIN_TOKEN": "inline-token",
             "DUNE_ADMIN_TOKEN_FILE": str(secret_file),
         }):
-            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "file-token")
+            self.assertEqual(self.panel.read_secret_env("DUNE_ADMIN_TOKEN"), "file-token")
         with mock.patch.dict(os.environ, {
             "DUNE_ADMIN_TOKEN": "inline-token",
             "DUNE_ADMIN_TOKEN_FILE": str(self.workspace / "missing-token.secret"),
         }):
-            self.assertEqual(self.panel.secret_env("DUNE_ADMIN_TOKEN"), "")
+            with self.assertRaisesRegex(ValueError, "cannot read DUNE_ADMIN_TOKEN_FILE"):
+                self.panel.read_secret_env("DUNE_ADMIN_TOKEN")
 
     def test_db_connect_reads_password_file(self):
         secret_file = self.workspace / "database-password.secret"
@@ -2142,6 +2148,30 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "marker_ids": [123],
                 "confirm": "DELETE MARKERS",
             })
+
+    def test_current_build_preflight_failure_never_stops_the_farm(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        build_check = self.workspace / "scripts" / "check-steam-update.sh"
+        with mock.patch.object(self.panel, "run_restart_command") as restart, \
+             mock.patch.object(self.panel, "soft_disconnect_online_players") as disconnect:
+            for missing in (False, True):
+                with self.subTest(missing=missing):
+                    if missing:
+                        build_check.unlink()
+                    else:
+                        build_check.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+                    result = self.panel.execute_restart({
+                        "id": "unverified-current-build", "execute": True,
+                        "action": "restart", "target": "all", "backup": False,
+                    })
+                    self.assertFalse(result["ok"])
+                    self.assertFalse(result["updatePreflight"]["ok"])
+                    self.assertIn("refusing to stop the farm", result["error"])
+                    restart.assert_not_called()
+                    disconnect.assert_not_called()
 
     def test_restart_start_sigpipe_is_success_when_farm_recovers(self):
         command = self.workspace / "scripts" / "restart-target.sh"

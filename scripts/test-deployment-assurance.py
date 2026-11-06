@@ -363,6 +363,9 @@ sleep() { :; }
         ):
             self.assertIn(phrase, source)
         push = (ROOT / "scripts" / "push-assured-control-plane.sh").read_text(encoding="utf-8")
+        preflight = push.index('"$repo_root/scripts/deploy-admin-panel.sh" --test-only')
+        self.assertLess(push.index('verify --manifest "$manifest"'), preflight)
+        self.assertLess(preflight, push.index('ssh -o BatchMode=yes'))
         self.assertIn("/tmp/dash-assured-stage-", push)
         self.assertIn("tar -C \"$repo_root\" -czf -", push)
         self.assertIn("--stage $stage_q", push)

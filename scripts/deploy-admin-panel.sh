@@ -1,9 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+run_admin_tests() {
+  (
+    cd "$script_dir/.."
+    python3 -m py_compile admin/*.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/change-intelligence.py scripts/deployment-assurance.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
+    python3 -m unittest scripts/test-cosmetics-admin.py
+    python3 scripts/test-restore-drill.py
+    python3 scripts/test-operational-slo.py
+    python3 scripts/test-capacity-intelligence.py
+    python3 scripts/test-desired-state.py
+    python3 scripts/test-change-intelligence.py
+    python3 scripts/test-deployment-assurance.py
+    python3 scripts/test-admin-panel-safe-surfaces.py
+    python3 scripts/test-docker-api-proxy.py
+    python3 scripts/test-deploy-admin-panel.py
+  )
+}
+
+# Run the native suite before staging or touching a production workspace.
+if [[ "${1:-}" == --test-only ]]; then
+  [[ $# == 1 ]] || { printf 'usage: %s --test-only\n' "$0" >&2; exit 2; }
+  run_admin_tests
+  exit
+fi
+
 env_file="${1:-${DUNE_ENV_FILE:-.env}}"
 container_runtime="${CONTAINER_RUNTIME:-docker}"
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/lib/snape-curl-auth.sh"
 if [[ -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
@@ -108,17 +133,7 @@ repair_running_map_runtime_patches() {
   return 1
 }
 
-python3 -m py_compile admin/*.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/change-intelligence.py scripts/deployment-assurance.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
-python3 -m unittest scripts/test-cosmetics-admin.py
-python3 scripts/test-restore-drill.py
-python3 scripts/test-operational-slo.py
-python3 scripts/test-capacity-intelligence.py
-python3 scripts/test-desired-state.py
-python3 scripts/test-change-intelligence.py
-python3 scripts/test-deployment-assurance.py
-python3 scripts/test-admin-panel-safe-surfaces.py
-python3 scripts/test-docker-api-proxy.py
-python3 scripts/test-deploy-admin-panel.py
+run_admin_tests
 
 "${compose[@]}" up -d --no-recreate postgres
 

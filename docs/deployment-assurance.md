@@ -147,6 +147,12 @@ scripts/push-assured-control-plane.sh \
   --host kspls0
 ```
 
+The push helper first runs the complete native Admin test suite in the reviewed
+checkout through `scripts/deploy-admin-panel.sh --test-only`. A failed test
+prevents staging and production mutation. The deployment helper and the native
+test files are manifest-bound so production never runs stale tests against a
+newer Admin entrypoint. Production repeats its normal deployment checks.
+
 The helper transfers the exact manifest files, including the assurance runner
 and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
