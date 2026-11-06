@@ -63,6 +63,13 @@ class RestartApiValidationTests(unittest.TestCase):
                 admission.return_value.recover_existing.assert_not_called()
             self.assertEqual(run.call_args.args[0], [str(API.ROOT / "scripts/check-steam-update.sh"), str(API.ENV_FILE)])
             self.assertEqual(run.call_args.kwargs["timeout"], 90)
+    def test_build_check_is_read_only_and_all_farm_only(self):
+        accepted = request(target="all", services=[], phase="check-current-build", fastDynamicStart=False)
+        self.assertEqual(API.validate_request(accepted, self.maps)["phase"], "check-current-build")
+        for changes in ({"target": "survival"}, {"services": ["survival"]},
+                        {"dryRun": True}, {"fastDynamicStart": True}):
+            with self.subTest(changes=changes), self.assertRaises(API.RequestError):
+                API.validate_request({**accepted, **changes}, self.maps)
 
     def test_rejects_unknown_target(self):
         with self.assertRaises(API.RequestError):
