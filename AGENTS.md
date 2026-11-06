@@ -1,24 +1,18 @@
-## Runner policy — owner directive, 2026-11-03
+## Runner policy — private ephemeral JIT
 
-GitHub-hosted runner minutes are available again. Use compatible GitHub-hosted
-runners for build, test, scan, packaging and release jobs when their operating
-system and architecture requirements are met. Preserve native OS and
-architecture. Use private ephemeral JIT runners when a job needs private
-network access, special hardware or storage, or explicit JIT validation. Do not
-require private JIT solely because of the former organization-wide policy, and
-do not treat missing private capacity as a blocker when a compatible hosted
-runner is available.
+All build, test, scan, packaging, and release jobs require compatible private
+ephemeral JIT runners. Preserve native operating systems and architectures.
+Missing capacity is a provisioning blocker: jobs queue until compatible private
+capacity is available. Do not add hosted runners or fallback routes.
 
-Keep untrusted pull-request code isolated in a disposable environment without
-secrets, with minimal permissions and restricted egress. Do not widen trusted
-runner-group access to make untrusted code run. Preserve active builds and other
-agents' work. Do not restart the broker while it owns running guests. Select a
-runner route that fits the workload and trust requirements; rerunning an old
-run uses its original workflow revision.
+Keep untrusted pull-request code in disposable VM-backed JIT environments with
+no secrets, minimal read permissions, and restricted egress. Do not widen trusted
+runner-group access. Preserve active builds and other agents' work; never restart
+the broker while it owns guests. Use the shared runner inventory and verify source
+routing, broker policy, group access, and live capacity together.
 
-The shared inventory continues to govern private JIT jobs. For a private route,
-verify source routing, broker policy, runner-group access and live capacity
-before relying on it.
+CodeQL is disabled by the organization directive. Preserve other security scans
+and their retained reports on private JIT runners.
 
 # Agent instructions - DuneAwakeningSelfHost
 
