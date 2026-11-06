@@ -31,6 +31,10 @@ Compose configuration, and container/image IDs in the private host state directo
 outside the Admin workspace. `scripts/install-dune-restart-api.sh .env --reload-idle`
 creates this approval only from the native host, checks for unfinished recovery
 jobs, and preserves the live listening socket. No HTTP route grants approval.
+The assured deployment option `--enable-service-recovery` first loads and qualifies
+protocol 2 while the controls remain disabled, then enables the two recovery
+flags and reapproves their exact configuration before recreating Admin. It does
+not enable image updates or perform a container lifecycle operation.
 Any dotenv change or replaced container requires native host reapproval. The
 older autoscaler route uses the same fixed existing-container operations and
 approved post-hook configuration, while retaining its map-only request shape.

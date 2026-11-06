@@ -181,6 +181,36 @@ class GuardTests(unittest.TestCase):
             admission.players.assert_not_called()  # Cold starts must not stop other occupied maps.
             run.assert_not_called()
 
+    def test_activation_requires_loaded_hardened_protocol_and_keeps_dotenv_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            admission = self.policy_fixture(root)
+            target = root / 'private.env'
+            admission.env_file.rename(target)
+            target.chmod(0o600)
+            admission.env_file.symlink_to(target)
+            policy = json.loads(admission.policy_path.read_text())
+            policy['environmentPath'] = str(target)
+            admission.policy_path.write_text(json.dumps(policy))
+            original = target.read_bytes()
+            for health in ({'qualified': False, 'busy': False}, {'qualified': True, 'busy': True}):
+                with mock.patch.object(CONTROL, 'health', return_value=health), mock.patch.object(CONTROL, 'approve_configuration') as approve:
+                    with self.assertRaisesRegex(CONTROL.Blocked, 'qualified-idle'):
+                        CONTROL.enable_approved_recovery(root, admission.env_file, admission.policy_path.parent, {'arrakeen'}, 'approved')
+                    approve.assert_not_called()
+                    self.assertEqual(target.read_bytes(), original)
+            with mock.patch.object(CONTROL, 'health', return_value={'qualified': True, 'busy': False}), mock.patch.object(CONTROL, 'approve_configuration', return_value={'ok': True}) as approve:
+                self.assertEqual(CONTROL.enable_approved_recovery(root, admission.env_file, admission.policy_path.parent, {'arrakeen'}, 'approved'), {'ok': True})
+                approve.assert_called_once()
+            self.assertTrue(admission.env_file.is_symlink())
+            values = CONTROL.read_environment(target)
+            self.assertTrue(CONTROL.enabled(values['DUNE_ADMIN_SERVICE_CONTROL_ENABLED']))
+            self.assertTrue(CONTROL.enabled(values['DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED']))
+            self.assertNotIn('DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED', values)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(CONTROL.Blocked):
+                admission.require_policy()  # Until host reapproval, the changed environment remains blocked.
+
     def exchange(self, request):
         server, client = socket.socketpair()
         with mock.patch.object(API, 'peer_allowed', return_value=True):

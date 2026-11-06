@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [--pre-change-backup DIR] [env-file]
+Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [--pre-change-backup DIR] [--enable-service-recovery] [env-file]
 
 Runs a production-host-only two-phase control-plane deployment. The workflow:
   1. verifies the exact commit/source manifest and a fresh pre-change backup;
@@ -24,12 +24,14 @@ env_file=".env"
 stage=""
 workspace=""
 pre_change_backup=""
+enable_service_recovery=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest) manifest="${2:-}"; shift 2 ;;
     --reason) reason="${2:-}"; shift 2 ;;
     --stage) stage="${2:-}"; shift 2 ;;
     --workspace) workspace="${2:-}"; shift 2 ;;
+    --enable-service-recovery) enable_service_recovery=true; shift ;;
     --pre-change-backup) pre_change_backup="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -374,7 +376,9 @@ if [[ -n "$stage" ]]; then
   rm -f "$apply_lock"
   apply_lock=""
 fi
-if [[ "$(read_env DUNE_ADMIN_SERVICE_CONTROL_ENABLED)" == true ]]; then
+if [[ "$enable_service_recovery" == true ]]; then
+  ./scripts/install-dune-restart-api.sh "$env_file" --reload-idle --enable-recovery
+elif [[ "$(read_env DUNE_ADMIN_SERVICE_CONTROL_ENABLED)" == true ]]; then
   ./scripts/install-dune-restart-api.sh "$env_file" --reload-idle
 fi
 ./scripts/deploy-admin-panel.sh "$env_file"

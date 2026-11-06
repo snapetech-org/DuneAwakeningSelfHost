@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/push-assured-control-plane.sh --manifest FILE --reason TEXT [--host HOST] [--required-host HOSTNAME] [--remote-workspace DIR] [--remote-env FILE] [--pre-change-backup DIR]
+Usage: scripts/push-assured-control-plane.sh --manifest FILE --reason TEXT [--host HOST] [--required-host HOSTNAME] [--remote-workspace DIR] [--remote-env FILE] [--pre-change-backup DIR] [--enable-service-recovery]
 
 Stages exact manifest files over SSH, without overwriting the live tree, then
 runs the production host's two-phase assured deployment from that private stage.
@@ -17,6 +17,7 @@ required_host="kspls0"
 remote_workspace="/home/keith/Documents/code/DuneAwakeningSelfHost"
 remote_env=".env"
 pre_change_backup=""
+recovery_arg=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest) manifest="${2:-}"; shift 2 ;;
@@ -25,6 +26,7 @@ while [[ $# -gt 0 ]]; do
     --required-host) required_host="${2:-}"; shift 2 ;;
     --remote-workspace) remote_workspace="${2:-}"; shift 2 ;;
     --remote-env) remote_env="${2:-}"; shift 2 ;;
+    --enable-service-recovery) recovery_arg="--enable-service-recovery"; shift ;;
     --pre-change-backup) pre_change_backup="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -87,4 +89,4 @@ pre_change_arg=""
 if [[ -n "$pre_change_backup" ]]; then
   pre_change_arg="--pre-change-backup $(printf '%q' "$pre_change_backup")"
 fi
-ssh -o BatchMode=yes "$remote_host" "set -euo pipefail; trap 'rm -rf $stage_q' EXIT; test \"\$(hostname -s)\" = $required_q; DUNE_PRODUCTION_HOST=$required_q PYTHONPATH=$stage_q/admin $stage_q/scripts/assured-control-plane-deploy.sh --manifest $stage_q/deployment-manifest.json --reason $reason_q --stage $stage_q --workspace $workspace_q $pre_change_arg $env_q"
+ssh -o BatchMode=yes "$remote_host" "set -euo pipefail; trap 'rm -rf $stage_q' EXIT; test \"\$(hostname -s)\" = $required_q; DUNE_PRODUCTION_HOST=$required_q PYTHONPATH=$stage_q/admin $stage_q/scripts/assured-control-plane-deploy.sh --manifest $stage_q/deployment-manifest.json --reason $reason_q --stage $stage_q --workspace $workspace_q $pre_change_arg $recovery_arg $env_q"

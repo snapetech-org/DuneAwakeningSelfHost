@@ -6,6 +6,9 @@ env_file="${1:-.env}"
 if [[ "$env_file" != /* ]]; then env_file="$repo_root/$env_file"; fi
 reload_idle="${2:-}"
 [[ -z "$reload_idle" || "$reload_idle" == --reload-idle ]] || { printf 'invalid reload option\n' >&2; exit 64; }
+enable_recovery="${3:-}"
+[[ -z "$enable_recovery" || ( "$reload_idle" == --reload-idle && "$enable_recovery" == --enable-recovery ) ]] || { printf 'invalid recovery activation option\n' >&2; exit 64; }
+[[ $# -le 3 ]] || exit 64
 service_user="${DUNE_SERVICE_USER:-$(stat -c %U "$repo_root")}"
 service_group="${DUNE_SERVICE_GROUP:-$(stat -c %G "$repo_root")}"
 service_template="$repo_root/config/systemd/dune-restart-api.service"
@@ -101,14 +104,24 @@ PYTHON
     sudo chmod 0660 /run/dune-restart-api/restart.sock
   fi
   sudo systemctl restart dune-restart-api.service
-  sudo python3 - "$repo_root" <<'PYTHON'
-import pathlib, sys
-root = pathlib.Path(sys.argv[1])
+  sudo python3 - "$repo_root" "$env_file" "$enable_recovery" <<'PYTHON'
+import importlib.util, pathlib, socket, sys
+root, env_file = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 sys.path[:0] = [str(root / "admin"), str(root / "scripts")]
 import host_service_control
 result = host_service_control.health("/run/dune-restart-api/restart.sock")
 if not result.get("qualified"):
     raise SystemExit("loaded host recovery protocol did not qualify")
 print("loaded guarded host recovery protocol qualified without a lifecycle operation")
+if sys.argv[3] == "--enable-recovery":
+    spec = importlib.util.spec_from_file_location("host_recovery_activation", root / "scripts/dune_restart_api.py")
+    api = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(api)
+    api.ENV_FILE = env_file
+    host_service_control.enable_approved_recovery(root, env_file, pathlib.Path("/var/lib/dune-restart-api"), api.configured_map_services(), socket.gethostname().split(".")[0])
+    result = host_service_control.health("/run/dune-restart-api/restart.sock")
+    if not all(result.get(key) is True for key in ("qualified", "serviceControlReady", "statefulControlReady")):
+        raise SystemExit("activated recovery controls did not qualify")
+    print("host-approved recovery controls enabled without a lifecycle operation")
 PYTHON
 fi

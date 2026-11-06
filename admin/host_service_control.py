@@ -177,6 +177,39 @@ def approve_configuration(root, env_file, state, maps, hostname):
     return {"ok": True, "approvedExistingServices": len(records), "protocol": PROTOCOL}
 
 
+def enable_approved_recovery(root, env_file, state, maps, hostname):
+    """Native installer activation, after the hardened host protocol is loaded."""
+    live = health("/run/dune-restart-api/restart.sock")
+    if live.get("qualified") is not True or live.get("busy") is not False:
+        raise Blocked("qualified-idle-host-control-required")
+    admission = Admission(root, env_file, hostname, pathlib.Path(state) / "approved-control.json")
+    admission.require_policy()
+    target = pathlib.Path(env_file).resolve(strict=True)
+    metadata = target.stat()
+    if metadata.st_uid != pathlib.Path(root).stat().st_uid or metadata.st_mode & 0o077:
+        raise Blocked("private-host-environment-required")
+    raw = target.read_bytes()
+    flags = {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED"}
+    lines = raw.decode().splitlines()
+    updated = [line for line in lines if line.partition("=")[0] not in flags]
+    updated.extend(key + "=true" for key in sorted(flags))
+    descriptor, temporary = tempfile.mkstemp(prefix=".recovery-enable-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write("\n".join(updated) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        if target.read_bytes() != raw:
+            raise Blocked("host-environment-changed-during-activation")
+        os.replace(temporary, target)
+    finally:
+        pathlib.Path(temporary).unlink(missing_ok=True)
+    # Until this succeeds, the changed dotenv fails the loaded protocol's policy
+    # check. Activation cannot fall back to the previous, less constrained route.
+    return approve_configuration(root, env_file, state, maps, hostname)
+
+
 class Admission:
     def __init__(self, root, env_file, expected_hostname, policy_path=None):
         self.root = pathlib.Path(root).resolve()
