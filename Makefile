@@ -1227,3 +1227,8 @@ test-host-service-control:
 	python3 scripts/test-dune-restart-api.py
 	python3 scripts/test-host-service-control.py
 	bash -n scripts/install-dune-restart-api.sh
+
+.PHONY: test-backup-verification-view
+validate: test-backup-verification-view
+test-backup-verification-view:
+	python3 scripts/test-backup-verification-view.py

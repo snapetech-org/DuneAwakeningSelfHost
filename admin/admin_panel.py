@@ -71,6 +71,7 @@ import base_retirement
 import gameplay_presets
 import command_console
 import host_service_control
+from backup_verification_view import local_read_view
 import federated_auth
 import cosmetics_admin
 import progression_admin
@@ -8400,6 +8401,16 @@ def verify_backup_set(relative_path):
 
 
 def verify_backup_set_native(path):
+    original = pathlib.Path(path)
+    try:
+        with local_read_view(original) as view:
+            ok, stdout, stderr = _verify_backup_set_native_contents(view)
+        return ok, stdout.replace(str(view), str(original)), stderr.replace(str(view), str(original))
+    except (OSError, ValueError) as exc:
+        return False, "", f"FAIL backup verification read view: {exc}\n"
+
+
+def _verify_backup_set_native_contents(path):
     """Structural verifier for the minimal admin image, which has no bash."""
     output = []
     errors = []

@@ -420,3 +420,21 @@ expiry/cancellation, dynamic-map starts, protected container recreation,
 running/strict process restart, health/backup failure, nested/outer tampering,
 mixed signed-evidence archives, RBAC/confirmation, dashboard wiring, metrics,
 and production-host/map-lifecycle guards.
+
+### Local verification read views
+
+Backup verification stages the exact recovery point into a private local
+`/var/tmp` directory before running the existing native checks. This avoids
+random SQLite reads on busy archive storage. Copies are bounded to 4,096 entries
+and 8 GiB, require an additional 1 GiB of free space, reject links and special
+files, and preserve the recovery-point name. Source identities must stay stable
+through copying and validation. Copied files are hashed while copying and again
+after verification; a checker cannot silently repair recovery data and claim it
+passed. SQLite reader indexes and empty WAL files are transient; nonempty WAL
+files remain part of the checked recovery data.
+
+The temporary view is removed after the native verifier returns. The authoritative
+backup remains in its archive location. Every existing integrity, HMAC, manifest,
+and recovery-evidence check remains mandatory. A live qualification of the retained
+1.8 GiB SQLite recovery set passed the complete native verifier in 82 seconds;
+that qualifies this read path and does not claim a production image rollout.

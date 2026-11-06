@@ -30,6 +30,13 @@ if [[ -z "$backup_dir" || ! -d "$backup_dir" ]]; then
   exit 1
 fi
 
+# The original validators run against a byte-identical private local copy.
+# This avoids random SQLite reads on slow archive storage and keeps the
+# authoritative recovery point untouched. The wrapper checks source stability.
+if [[ "${DUNE_BACKUP_VERIFY_VIEW_ACTIVE:-false}" != true ]]; then
+  exec python3 "$script_dir/backup_verification_view.py" --script "$script_dir/verify-backup.sh" "$backup_dir"
+fi
+
 ok=true
 
 check_dump() {
