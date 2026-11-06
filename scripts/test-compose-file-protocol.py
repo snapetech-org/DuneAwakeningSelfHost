@@ -10,6 +10,17 @@ SCRIPTS = pathlib.Path(__file__).resolve().parent
 
 
 class ComposeFileProtocolTests(unittest.TestCase):
+    def test_approved_configuration_skips_writable_overlay_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            approved = pathlib.Path(directory) / 'approved-compose.json'
+            approved.write_text('{}')
+            env = os.environ | {'DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE': str(approved)}
+            result = subprocess.run(['bash', str(SCRIPTS / 'compose-files.sh'), '/missing/dotenv'], env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout, str(approved) + '\n')
+            approved.unlink()
+            result = subprocess.run(['bash', str(SCRIPTS / 'compose-files.sh')], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 78)
+
     def test_initial_secret_relocation_cannot_become_a_compose_filename(self):
         with tempfile.TemporaryDirectory() as directory:
             base = pathlib.Path(directory)

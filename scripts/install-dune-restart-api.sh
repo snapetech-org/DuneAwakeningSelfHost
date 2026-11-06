@@ -72,6 +72,29 @@ if pid:
         if path.read_text().strip():
             raise SystemExit("host API owns a native command; defer its reload")
 PYTHON
+  # Approval is a host-only operation. Never expose this through the socket API.
+  sudo python3 - "$repo_root" "$env_file" <<'PYTHON'
+import importlib.util, pathlib, socket, sys
+root, env_file = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+sys.path[:0] = [str(root / "admin"), str(root / "scripts")]
+import host_service_control
+if pathlib.Path("/run/dune-restart-api/restart.sock").exists():
+    health = host_service_control.request_socket("/run/dune-restart-api/restart.sock", "GET", "/v1/health", timeout=5)
+    if health.get("busy") is not False:
+        raise SystemExit("host recovery is busy or its idle state is unknown; defer approval")
+spec = importlib.util.spec_from_file_location("host_restart_approval", root / "scripts/dune_restart_api.py")
+api = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(api)
+api.ENV_FILE = env_file
+state = pathlib.Path("/var/lib/dune-restart-api")
+for record in state.glob("*.json"):
+    if host_service_control.JOB_PATTERN.fullmatch(record.stem):
+        import json
+        if json.loads(record.read_text()).get("state") not in {"completed", "failed", "blocked"}:
+            raise SystemExit("unfinished host recovery requires review before approval")
+result = host_service_control.approve_configuration(root, env_file, state, api.configured_map_services(), socket.gethostname().split(".")[0])
+print("approved existing-container recovery configuration; protocol", result["protocol"])
+PYTHON
   # Keep the live listening socket inode: Admin has a bind mount of that inode.
   if [[ -S /run/dune-restart-api/restart.sock && ! -L /run/dune-restart-api/restart.sock ]]; then
     sudo chgrp root /run/dune-restart-api/restart.sock

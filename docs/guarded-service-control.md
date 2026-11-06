@@ -20,9 +20,21 @@ Before execution, the host checks its configured identity, the independent
 stateful-service gate, all four current/recent player counts, a current signed
 readiness receipt, and the exact selected/running image identity. It takes the
 shared maintenance lock, creates and verifies a fresh native backup, then repeats
-the activity, readiness, image and configuration checks. It runs the fixed native
-restart script with its normal post-start hooks. This route cannot promote an
-image; use the separately qualified image-update workflow.
+the activity, readiness, image and configuration checks. It starts, stops or
+restarts only the approved existing container ID, then runs the native post-start
+health and runtime-patch verification hooks. It cannot create or recreate a
+container, apply changed Compose settings or promote an image; use the separately
+qualified native host workflow for those operations.
+
+Protocol 2 requires a host-approved snapshot of the dotenv, fully rendered
+Compose configuration, and container/image IDs in the private host state directory
+outside the Admin workspace. `scripts/install-dune-restart-api.sh .env --reload-idle`
+creates this approval only from the native host, checks for unfinished recovery
+jobs, and preserves the live listening socket. No HTTP route grants approval.
+Any dotenv change or replaced container requires native host reapproval. The
+older autoscaler route uses the same fixed existing-container operations and
+approved post-hook configuration, while retaining its map-only request shape.
+Autoscaling cannot provision a missing container through this transport.
 
 The host stores private durable job records outside the Admin workspace.
 `GET /v1/service-control/JOB_ID` reports progress and the outcome without returning

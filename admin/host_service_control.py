@@ -10,18 +10,20 @@ import pathlib
 import re
 import socket
 import subprocess
+import stat
+import tempfile
 
 import change_intelligence
 import update_readiness
 from secret_env import read_secret_env
 
 
-PROTOCOL = 1
+PROTOCOL = 2
 STATEFUL = frozenset({"postgres", "admin-rmq", "game-rmq"})
 CONTROL = frozenset({"director", "gateway", "text-router", "rmq-auth-shim"})
 JOB_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 IDENTIFIER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
-GUARDS = ("signed-readiness", "current-and-recent-players", "verified-backup", "same-image", "native-post-hooks", "serialized")
+GUARDS = ("signed-readiness", "current-and-recent-players", "verified-backup", "same-image", "native-post-hooks", "serialized", "host-approved-configuration", "existing-containers")
 PLAYER_FIELDS = ("active_farm_connected_players", "raw_farm_connected_players", "online_controller_ids", "online_or_recently_disconnected")
 PLAYER_SQL = """begin read only; set local statement_timeout='15s';
 select row_to_json(counts) from (select
@@ -107,12 +109,79 @@ def request_socket(path, method, route, body=None, timeout=30):
         connection.close()
 
 
+def approve_configuration(root, env_file, state, maps, hostname):
+    """Called only by the native host installer, never by an HTTP route."""
+    root, env_file, state = pathlib.Path(root).resolve(), pathlib.Path(env_file), pathlib.Path(state)
+    if state.is_symlink():
+        raise Blocked("host-control-state-directory-unsafe")
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    owner = root.stat()
+    os.chmod(state, 0o700)
+    os.chown(state, owner.st_uid, owner.st_gid)
+    raw = env_file.read_bytes()
+    values = read_environment(env_file)
+    project = values.get("DUNE_RESTART_COMPOSE_PROJECT") or values.get("COMPOSE_PROJECT_NAME") or "dune_server"
+    if not IDENTIFIER.fullmatch(project):
+        raise Blocked("host-project-invalid")
+    def run(command):
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode:
+            raise Blocked("host-control-approval-check-failed")
+        return result.stdout
+    files = run([str(root / "scripts/compose-files.sh"), str(env_file)]).strip().split(":")
+    command = ["docker", "compose", "--project-name", project, "--project-directory", str(root)]
+    for name in files:
+        command += ["-f", str((root / name).resolve())]
+    rendered = json.loads(run(command + ["--env-file", str(env_file), "config", "--format", "json"]))
+    allowed = set(maps) | STATEFUL | CONTROL
+    identifiers = run(["docker", "ps", "-aq", "--no-trunc", "--filter", "label=com.docker.compose.project=" + project]).split()
+    records = {}
+    for identifier in identifiers:
+        if not re.fullmatch(r"[0-9a-f]{64}", identifier):
+            raise Blocked("host-control-container-identity-invalid")
+        template = '{{.Id}}|{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}'
+        parts = run(["docker", "inspect", "--format", template, identifier]).strip().split("|")
+        if len(parts) != 4 or parts[2] != project:
+            raise Blocked("host-control-container-project-invalid")
+        if parts[3] in allowed:
+            if parts[3] in records or not re.fullmatch(r"sha256:[0-9a-f]{64}", parts[1]):
+                raise Blocked("host-control-container-selection-ambiguous")
+            records[parts[3]] = {"containerId": parts[0], "imageId": parts[1]}
+    if not (STATEFUL | CONTROL) <= set(records):
+        raise Blocked("host-control-required-services-missing")
+    compose = json.dumps(rendered, sort_keys=True).encode() + b"\n"
+    if env_file.read_bytes() != raw:
+        raise Blocked("host-environment-changed-during-approval")
+    policy = {
+        "schemaVersion": PROTOCOL, "host": hostname, "project": project,
+        "environmentPath": str(env_file.resolve()), "environmentSha256": hashlib.sha256(raw).hexdigest(),
+        "environmentFile": "approved.env", "composeFile": "approved-compose.json",
+        "composeSha256": hashlib.sha256(compose).hexdigest(),
+        "secretDirectory": str((root / "config/secrets").resolve()), "services": records,
+    }
+    for name, content in (("approved.env", raw), ("approved-compose.json", compose),
+                          ("approved-control.json", json.dumps(policy, sort_keys=True).encode() + b"\n")):
+        descriptor, temporary = tempfile.mkstemp(prefix=".approve-", dir=state)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chown(temporary, owner.st_uid, owner.st_gid)
+            os.replace(temporary, state / name)
+        finally:
+            pathlib.Path(temporary).unlink(missing_ok=True)
+    return {"ok": True, "approvedExistingServices": len(records), "protocol": PROTOCOL}
+
+
 class Admission:
-    def __init__(self, root, env_file, expected_hostname):
+    def __init__(self, root, env_file, expected_hostname, policy_path=None):
         self.root = pathlib.Path(root).resolve()
         self.env_file = pathlib.Path(env_file)
         self.values = read_environment(env_file)
         self.expected_hostname = expected_hostname
+        self.policy_path = pathlib.Path(policy_path or "/var/lib/dune-restart-api/approved-control.json")
+        self.policy = None
         self.environment_digest = hashlib.sha256(self.env_file.read_bytes()).digest()
         self.project = self.values.get("DUNE_RESTART_COMPOSE_PROJECT") or self.values.get("COMPOSE_PROJECT_NAME") or "dune_server"
         if not IDENTIFIER.fullmatch(self.project):
@@ -151,22 +220,80 @@ class Admission:
         assert_empty_farm(counts)
         return counts
 
+    def require_policy(self):
+        metadata = self.policy_path.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != self.root.stat().st_uid
+                or metadata.st_mode & 0o077 or not 0 < metadata.st_size <= 128 * 1024):
+            raise Blocked("host-control-policy-unavailable")
+        policy = json.loads(self.policy_path.read_text())
+        if (policy.get("schemaVersion") != PROTOCOL or policy.get("project") != self.project
+                or policy.get("host") != self.expected_hostname
+                or policy.get("environmentPath") != str(self.env_file.resolve())
+                or policy.get("environmentSha256") != hashlib.sha256(self.env_file.read_bytes()).hexdigest()):
+            raise Blocked("host-control-configuration-requires-approval")
+        for name, field in (("environment", "environmentFile"), ("compose", "composeFile")):
+            if policy.get(field) != {"environment": "approved.env", "compose": "approved-compose.json"}[name]:
+                raise Blocked("host-control-approved-file-name-invalid")
+            path = self.policy_path.parent / policy[field]
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.root.stat().st_uid or info.st_mode & 0o077
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != policy[name + "Sha256"]):
+                raise Blocked("host-control-approved-files-changed")
+        if str((self.root / "config/secrets").resolve()) != policy.get("secretDirectory"):
+            raise Blocked("host-control-secret-source-changed")
+        self.policy = policy
+        self.values = read_environment(self.policy_path.parent / policy["environmentFile"])
+        self.environment_digest = bytes.fromhex(policy["environmentSha256"])
+        return policy
+
+    def approved_environment(self, environment):
+        policy = self.require_policy()
+        result = dict(environment)
+        result.update({
+            "ENV_FILE": str(self.policy_path.parent / policy["environmentFile"]),
+            "COMPOSE_PROJECT_NAME": self.project,
+            "COMPOSE_FILES": str(self.policy_path.parent / policy["composeFile"]),
+            "DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE": str(self.policy_path.parent / policy["composeFile"]),
+            "DUNE_SECRET_SOURCE_DIRECTORY": policy["secretDirectory"],
+        })
+        for key in ("DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED", "DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED"):
+            if key in self.values:
+                result[key] = self.values[key]
+        return result
+
     def same_image(self, service):
-        current = self.run(["docker", "inspect", "--format", "{{.Image}}", self.container(service)]).strip()
-        files = self.run([str(self.root / "scripts/compose-files.sh"), str(self.env_file)]).strip().split(":")
-        command = ["docker", "compose"]
-        for value in files:
-            path = (self.root / value).resolve()
-            if not path.is_relative_to(self.root) or not path.is_file() or not re.fullmatch(r"compose(?:\.[A-Za-z0-9_-]+)*\.ya?ml", path.name):
-                raise Blocked("compose-source-unapproved")
-            command.extend(["-f", str(path)])
-        reference = self.run(command + ["--env-file", str(self.env_file), "config", "--images", service]).strip()
-        if not re.fullmatch(r"[A-Za-z0-9._:/@-]{1,512}", reference):
-            raise Blocked("service-image-reference-invalid")
-        selected = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", reference]).strip()
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", current) or current != selected:
-            raise Blocked("image-change-requires-qualified-update")
+        policy = self.require_policy()
+        record = (policy.get("services") or {}).get(service)
+        if not isinstance(record, dict) or record.get("containerId") != self.container(service):
+            raise Blocked("existing-container-identity-requires-approval")
+        current = self.run(["docker", "inspect", "--format", "{{.Image}}", record["containerId"]]).strip()
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", current) or current != record.get("imageId"):
+            raise Blocked("existing-container-image-requires-approval")
         return current
+
+    def recover_existing(self, service, action, environment, *, dry_run=False, post_hooks=True):
+        if action not in {"start", "stop", "restart"}:
+            raise Blocked("existing-container-action-invalid")
+        self.same_image(service)
+        identifier = self.policy["services"][service]["containerId"]
+        if dry_run:
+            return {"ok": True, "exitCode": 0, "postHooks": False}
+        if action in {"start", "restart"}:
+            self.run([str(self.root / "scripts/validate-landsraad-coriolis-cycle.sh"), environment["ENV_FILE"]], env=environment)
+        command = ["docker", action]
+        if action in {"restart", "stop"}:
+            command += ["--time", "30"]
+        self.run(command + [identifier], timeout=1800, env=environment)
+        if post_hooks and action in {"start", "restart"}:
+            self.post_start_hooks(environment)
+        self.same_image(service)
+        return {"ok": True, "exitCode": 0, "postHooks": action in {"start", "restart"}}
+
+    def post_start_hooks(self, environment):
+        self.run([str(self.root / "scripts/restart-post-start-health.sh")], timeout=1800, env=environment)
+        patch = self.root / "scripts/patch-logoff-timers-runtime.sh"
+        if patch.is_file():
+            self.run([str(patch), "--local", "--dry-run"], timeout=180, env=environment)
 
     def readiness(self):
         configured = dict(self.values)
@@ -217,7 +344,7 @@ class Admission:
         return path if path.is_absolute() else self.root / path
 
     def backup(self, environment):
-        output = self.run([str(self.root / "scripts/backup-state.sh"), str(self.env_file)], timeout=1800, env=environment)
+        output = self.run([str(self.root / "scripts/backup-state.sh"), environment["ENV_FILE"]], timeout=1800, env=environment)
         paths = [line.removeprefix("backup complete: ").strip() for line in output.splitlines() if line.startswith("backup complete: ")]
         if len(paths) != 1:
             raise Blocked("fresh-backup-unavailable")

@@ -18,7 +18,6 @@ import sys
 import threading
 import time
 import tempfile
-import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -54,8 +53,8 @@ def peer_allowed(pid, uid):
         group = pathlib.Path(f"/proc/{int(pid)}/cgroup").read_text()
         match = re.search(r"(?:^|/)(?:docker-)?([0-9a-f]{64})(?:\.scope)?(?:/|$)", group, re.M)
         if match:
-            values = host_service_control.read_environment(ENV_FILE)
-            project = values.get("DUNE_RESTART_COMPOSE_PROJECT") or values.get("COMPOSE_PROJECT_NAME") or "dune_server"
+            admission = host_service_control.Admission(ROOT, ENV_FILE, os.environ.get("DUNE_RESTART_API_EXPECTED_HOSTNAME", ""))
+            project = admission.require_policy()["project"]
             result = subprocess.run(
                 ["docker", "inspect", "--format", '{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}', match[1]],
                 text=True, capture_output=True, timeout=5, check=False,
@@ -64,14 +63,16 @@ def peer_allowed(pid, uid):
         if any(name in group for name in ("docker", "libpod", "containerd", "kubepods")):
             return False
         return uid in {0, os.getuid()}
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, host_service_control.Blocked, subprocess.SubprocessError):
         return False
 
 
 def control_health():
     try:
-        values = host_service_control.read_environment(ENV_FILE)
         expected = os.environ.get("DUNE_RESTART_API_EXPECTED_HOSTNAME", "")
+        admission = host_service_control.Admission(ROOT, ENV_FILE, expected)
+        admission.require_policy()
+        values = admission.values
         available = bool(expected and socket.gethostname().split(".")[0] == expected)
         return {
             "ok": True, "protocol": host_service_control.PROTOCOL,
@@ -80,7 +81,7 @@ def control_health():
             "guards": list(host_service_control.GUARDS),
             "busy": RESTART_LOCK.locked() or CONTROL_ACTIVE["jobId"] is not None,
         }
-    except (OSError, ValueError):
+    except (OSError, ValueError, KeyError, host_service_control.Blocked):
         return {"ok": False, "protocol": host_service_control.PROTOCOL, "serviceControlReady": False, "statefulControlReady": False}
 
 
@@ -122,6 +123,7 @@ def execute_control(job):
         if not acquired:
             raise host_service_control.Blocked("another-native-restart-is-running")
         admission = host_service_control.Admission(ROOT, ENV_FILE, os.environ.get("DUNE_RESTART_API_EXPECTED_HOSTNAME", ""))
+        admission.require_policy()
         admission.require_gate(job["service"])
         lock_path = ROOT / "backups/admin-panel/operation.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +140,7 @@ def execute_control(job):
         phase = "stop" if job["action"] == "stop" else job["action"]
         native = {"target": job["service"], "services": [job["service"]], "action": "shutdown" if phase == "stop" else "restart",
                   "phase": phase, "dryRun": False, "fastDynamicStart": False, "jobId": job["jobId"]}
-        environment = restart_environment(native)
+        environment = admission.approved_environment(restart_environment(native))
         environment["DUNE_OPERATION_LOCK_HELD"] = "true"
         environment["DUNE_RESTART_ALLOW_STATEFUL"] = "true" if job["service"] in host_service_control.STATEFUL else "false"
         job["state"] = "backing-up"
@@ -152,15 +154,11 @@ def execute_control(job):
             raise host_service_control.Blocked("admission-changed-during-backup")
         job["state"] = "executing"
         save_control_job(job)
-        result = subprocess.run([str(RESTART_SCRIPT), job["service"]], cwd=ROOT, env=environment,
-                                text=True, capture_output=True, timeout=COMMAND_TIMEOUT_SECONDS, check=False)
-        job.update(state="completed" if result.returncode == 0 else "failed", ok=result.returncode == 0,
-                   exitCode=result.returncode, postHooks=phase in {"start", "restart"},
-                   outputBytes=len((result.stdout + result.stderr).encode()),
-                   outputSha256=hashlib.sha256((result.stdout + result.stderr).encode()).hexdigest())
+        result = admission.recover_existing(job["service"], job["action"], environment)
+        job.update(result, state="completed" if result["ok"] else "failed")
     except host_service_control.Blocked as exc:
         job.update(state="blocked", ok=False, error=str(exc))
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         job.update(state="failed", ok=False, error="native-service-control-failed")
     finally:
         if lock is not None:
@@ -310,20 +308,29 @@ def execute_restart(request: dict) -> dict:
         return {"ok": False, "exitCode": 75, "error": "another host restart is already running", "output": ""}
     started = time.monotonic()
     try:
-        result = subprocess.run(
-            [str(RESTART_SCRIPT), request["target"]], cwd=ROOT,
-            env=restart_environment(request), capture_output=True, text=True,
-            timeout=COMMAND_TIMEOUT_SECONDS, check=False,
-        )
-        output = (result.stdout + result.stderr).strip()
-        if len(output) > MAX_OUTPUT_CHARS:
-            output = output[-MAX_OUTPUT_CHARS:]
-        return {
-            "ok": result.returncode == 0,
-            "exitCode": result.returncode,
-            "output": output,
-            "durationMs": int((time.monotonic() - started) * 1000),
-        }
+        admission = host_service_control.Admission(ROOT, ENV_FILE, os.environ.get("DUNE_RESTART_API_EXPECTED_HOSTNAME", ""))
+        policy = admission.require_policy()
+        if not admission.expected_hostname or socket.gethostname().split(".")[0] != admission.expected_hostname:
+            raise host_service_control.Blocked("host-identity-not-approved")
+        environment = admission.approved_environment(restart_environment(request))
+        services = ([*sorted(configured_map_services()), *sorted(host_service_control.CONTROL)]
+                    if request["target"] == "all" else request["services"])
+        # Admit the entire batch before touching any existing container. New
+        # containers and image/configuration changes require the native installer.
+        for service in services:
+            admission.same_image(service)
+        action = "stop" if request["phase"] in {"stop", "shutdown"} else request["phase"]
+        if not request["dryRun"] and action in {"start", "restart"}:
+            admission.run([str(ROOT / "scripts/validate-landsraad-coriolis-cycle.sh"), environment["ENV_FILE"]], env=environment)
+        for service in services:
+            admission.unchanged_environment()
+            admission.recover_existing(service, action, environment, dry_run=request["dryRun"], post_hooks=False)
+        if not request["dryRun"] and action in {"start", "restart"}:
+            admission.post_start_hooks(environment)
+        return {"ok": True, "exitCode": 0, "output": "Existing approved containers processed.",
+                "durationMs": int((time.monotonic() - started) * 1000)}
+    except (host_service_control.Blocked, ValueError, KeyError):
+        return {"ok": False, "exitCode": 78, "error": "host-approved existing-container recovery admission failed", "output": ""}
     except subprocess.TimeoutExpired:
         return {"ok": False, "exitCode": 124, "error": "host restart exceeded its time limit", "output": ""}
     except OSError as exc:

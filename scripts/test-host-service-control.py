@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed admission, protocol, identity and side-effect ordering tests."""
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -64,6 +65,121 @@ class GuardTests(unittest.TestCase):
             env.write_text('DUNE_ADMIN_SERVICE_CONTROL_ENABLED=false\n')
             with self.assertRaisesRegex(CONTROL.Blocked, 'configuration-changed'):
                 admission.unchanged_environment()
+
+    def policy_fixture(self, root):
+        env = root / '.env'
+        env.write_text('DUNE_ADMIN_SERVICE_CONTROL_ENABLED=true\n')
+        state = root / 'host-private-state'
+        state.mkdir(mode=0o700)
+        approved = state / 'approved.env'
+        approved.write_bytes(env.read_bytes())
+        approved.chmod(0o600)
+        compose = state / 'approved-compose.json'
+        compose.write_text('{}')
+        compose.chmod(0o600)
+        policy = {'schemaVersion': CONTROL.PROTOCOL, 'host': 'approved', 'project': 'dune_server',
+                  'environmentPath': str(env.resolve()), 'environmentSha256': hashlib.sha256(env.read_bytes()).hexdigest(),
+                  'environmentFile': approved.name, 'composeFile': compose.name,
+                  'composeSha256': hashlib.sha256(compose.read_bytes()).hexdigest(),
+                  'secretDirectory': str((root / 'config/secrets').resolve()),
+                  'services': {'arrakeen': {'containerId': 'a' * 64, 'imageId': 'sha256:' + 'b' * 64}}}
+        path = state / 'approved-control.json'
+        path.write_text(json.dumps(policy))
+        path.chmod(0o600)
+        return CONTROL.Admission(root, env, 'approved', path)
+
+    def test_policy_rejects_unapproved_environment_and_modified_private_files(self):
+        for target in ('source', 'environment', 'compose', 'permissions', 'symlink'):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                admission = self.policy_fixture(pathlib.Path(directory))
+                admission.require_policy()
+                if target == 'source':
+                    admission.env_file.write_text('DUNE_ADMIN_SERVICE_CONTROL_ENABLED=true\nCOMPOSE_FILES=unapproved.yaml\n')
+                elif target == 'permissions':
+                    admission.policy_path.chmod(0o644)
+                elif target == 'symlink':
+                    saved = admission.policy_path.with_suffix('.saved')
+                    admission.policy_path.rename(saved)
+                    admission.policy_path.symlink_to(saved)
+                else:
+                    name = 'approved.env' if target == 'environment' else 'approved-compose.json'
+                    (admission.policy_path.parent / name).write_text('changed')
+                with self.assertRaises(CONTROL.Blocked):
+                    admission.require_policy()
+
+    def test_existing_recovery_uses_only_pinned_ids_and_keeps_post_hooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            admission = self.policy_fixture(pathlib.Path(directory))
+            calls = []
+            def run(command, **kwargs):
+                calls.append(command)
+                if command[:2] == ['docker', 'ps']:
+                    return 'a' * 64
+                if command[:2] == ['docker', 'inspect']:
+                    return 'sha256:' + 'b' * 64
+                return ''
+            with mock.patch.object(admission, 'run', side_effect=run):
+                environment = admission.approved_environment({})
+                self.assertEqual(environment['COMPOSE_FILES'], str(admission.policy_path.parent / 'approved-compose.json'))
+                admission.recover_existing('arrakeen', 'restart', environment)
+            self.assertIn(['docker', 'restart', '--time', '30', 'a' * 64], calls)
+            self.assertIn([str(admission.root / 'scripts/restart-post-start-health.sh')], calls)
+            self.assertFalse(any('compose' in command or 'up' in command for command in calls))
+            with mock.patch.object(admission, 'container', return_value='c' * 64), mock.patch.object(admission, 'run') as mutate:
+                with self.assertRaisesRegex(CONTROL.Blocked, 'identity-requires-approval'):
+                    admission.recover_existing('arrakeen', 'start', environment)
+                mutate.assert_not_called()
+            with mock.patch.object(admission, 'container', return_value='a' * 64), mock.patch.object(admission, 'run', return_value='sha256:' + 'd' * 64) as mutate:
+                with self.assertRaisesRegex(CONTROL.Blocked, 'image-requires-approval'):
+                    admission.recover_existing('arrakeen', 'start', environment)
+                self.assertEqual(len(mutate.call_args_list), 1)
+
+    def test_native_approval_pins_existing_services_and_writes_private_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            env = root / '.env'
+            env.write_text('COMPOSE_PROJECT_NAME=fixture\n')
+            services = sorted(CONTROL.STATEFUL | CONTROL.CONTROL | {'arrakeen'})
+            identifiers = {str(index + 1).zfill(64): service for index, service in enumerate(services)}
+            def run(command, **kwargs):
+                if command[0].endswith('compose-files.sh'):
+                    output = 'compose.yaml\n'
+                elif command[:2] == ['docker', 'compose']:
+                    output = json.dumps({'name': 'fixture', 'services': {name: {} for name in services}})
+                elif command[:2] == ['docker', 'ps']:
+                    output = '\n'.join(identifiers)
+                else:
+                    identifier = command[-1]
+                    output = identifier + '|sha256:' + 'b' * 64 + '|fixture|' + identifiers[identifier]
+                return mock.Mock(returncode=0, stdout=output)
+            with mock.patch.object(CONTROL.subprocess, 'run', side_effect=run):
+                result = CONTROL.approve_configuration(root, env, root / 'host-private-state', {'arrakeen'}, 'approved')
+            admission = CONTROL.Admission(root, env, 'approved', root / 'host-private-state/approved-control.json')
+            policy = admission.require_policy()
+            self.assertEqual(result['approvedExistingServices'], len(services))
+            self.assertEqual(policy['services']['arrakeen']['imageId'], 'sha256:' + 'b' * 64)
+            self.assertEqual(admission.policy_path.stat().st_mode & 0o777, 0o600)
+
+    def test_legacy_route_cannot_fall_back_to_compose_or_skip_approval(self):
+        request = {'target': 'arrakeen', 'services': ['arrakeen'], 'phase': 'start',
+                   'action': 'restart', 'jobId': 'autoscaler-fixture', 'dryRun': False, 'fastDynamicStart': True}
+        with mock.patch.object(API.host_service_control, 'Admission') as factory, mock.patch.object(API.subprocess, 'run') as run:
+            factory.return_value.require_policy.side_effect = CONTROL.Blocked('missing-policy')
+            result = API.execute_restart(request)
+            self.assertFalse(result['ok'])
+            factory.return_value.recover_existing.assert_not_called()
+            run.assert_not_called()
+        with mock.patch.object(API.host_service_control, 'Admission') as factory, mock.patch.object(API.socket, 'gethostname', return_value='approved'), mock.patch.object(API.subprocess, 'run') as run:
+            admission = factory.return_value
+            admission.expected_hostname = 'approved'
+            admission.approved_environment.return_value = {'ENV_FILE': '/host/private/approved.env'}
+            result = API.execute_restart(request)
+            self.assertTrue(result['ok'])
+            admission.same_image.assert_called_once_with('arrakeen')
+            admission.recover_existing.assert_called_once_with('arrakeen', 'start', {'ENV_FILE': '/host/private/approved.env'}, dry_run=False, post_hooks=False)
+            admission.post_start_hooks.assert_called_once()
+            admission.players.assert_not_called()  # Cold starts must not stop other occupied maps.
+            run.assert_not_called()
 
     def exchange(self, request):
         server, client = socket.socketpair()
@@ -137,12 +253,14 @@ class GuardTests(unittest.TestCase):
                             raise CONTROL.Blocked('test-admission-blocked')
                         return value
                     getattr(admission, name).side_effect = call
-                def execute(*args, **kwargs):
+                admission.approved_environment.side_effect = lambda env: env
+                def execute(service, action, environment):
                     events.append('mutation')
-                    self.assertEqual(kwargs['env']['DUNE_OPERATION_LOCK_HELD'], 'true')
-                    self.assertEqual(kwargs['env']['DUNE_RESTART_ALLOW_STATEFUL'], 'true')
-                    return mock.Mock(returncode=0, stdout='', stderr='')
-                with mock.patch.object(API, 'ROOT', root), mock.patch.object(API, 'CONTROL_STATE', root / 'jobs'), mock.patch.object(API.host_service_control, 'Admission', return_value=admission), mock.patch.object(API.subprocess, 'run', side_effect=execute):
+                    self.assertEqual(environment['DUNE_OPERATION_LOCK_HELD'], 'true')
+                    self.assertEqual(environment['DUNE_RESTART_ALLOW_STATEFUL'], 'true')
+                    return {'ok': True, 'exitCode': 0, 'postHooks': True}
+                admission.recover_existing.side_effect = execute
+                with mock.patch.object(API, 'ROOT', root), mock.patch.object(API, 'CONTROL_STATE', root / 'jobs'), mock.patch.object(API.host_service_control, 'Admission', return_value=admission):
                     job = {'jobId': 'd' * 32, 'service': 'postgres', 'action': 'restart'}
                     API.execute_control(job)
                 if failure:
