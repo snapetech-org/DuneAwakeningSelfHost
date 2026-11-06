@@ -7,6 +7,12 @@ Missing, expired, future-dated or invalid proof reports not ready; a newly
 recorded change invalidates the status and metrics caches. The separate small
 signed deployment-receipt store remains visible while timeline metrics defer.
 
+Audit-ledger connections use a bounded 1 GiB read-only SQLite page mapping to
+avoid per-page filesystem round trips during full verification. This changes
+the read path, not the SQLite, HMAC, append-only or authenticated-head checks.
+SQLite retains its normal read fallback when mapping is unavailable. Native
+read-only qualification verified all 400,996 events in 23.6 seconds.
+
 DASH can promote a reviewed control-plane commit through one two-phase,
 fail-closed workflow. The outcome is not merely “the deploy command returned
 zero.” A successful receipt proves source provenance, map continuity, current

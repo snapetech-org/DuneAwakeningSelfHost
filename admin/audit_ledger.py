@@ -111,6 +111,10 @@ class Store:
         connection.row_factory = sqlite3.Row
         connection.execute("pragma foreign_keys=on")
         connection.execute("pragma busy_timeout=10000")
+        # Full chain verification remains mandatory. A bounded read-only page
+        # mapping avoids a network-filesystem metadata round trip per SQLite
+        # page; unsupported builds retain SQLite's normal read fallback.
+        connection.execute("pragma mmap_size=1073741824")
         return connection
 
     def _key(self) -> bytes:
