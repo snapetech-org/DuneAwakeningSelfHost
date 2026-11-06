@@ -54,6 +54,7 @@ SUPPORT_FILES = {
     "admin/rabbitmq_restore_drill.py",
     "admin/restore_drill.py",
     "admin/update_readiness.py",
+    "admin/runtime_security.py",
     "scripts/deployment-assurance.py",
     "scripts/assured-control-plane-deploy.sh",
     "scripts/backup-state.sh",

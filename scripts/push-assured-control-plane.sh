@@ -63,7 +63,7 @@ for support in \
   admin/creator_canary.py admin/public_ip_canary.py admin/canary_autopilot.py admin/operations_briefing.py admin/operations_calendar.py admin/alert_inbox.py admin/peer_watch.py admin/player_life_recovery.py admin/offline_teleport.py admin/addon_admin.py admin/base_creator.py admin/base_retirement.py admin/cosmetics_admin.py admin/gameplay_presets.py \
   docs/ecosystem-feature-parity-audit.md \
   admin/feature_readiness_history.py admin/maintenance_planner.py admin/maintenance_outcomes.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
-  admin/update_readiness.py scripts/deployment-assurance.py \
+  admin/update_readiness.py admin/runtime_security.py scripts/deployment-assurance.py \
   scripts/assured-control-plane-deploy.sh scripts/backup-state.sh scripts/restore-state.sh scripts/restore-alert-inbox.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \
   scripts/check-rabbitmq-cert-sans.sh scripts/restart-target.sh scripts/install-public-ip-monitor.sh \
   config/systemd/dune-public-ip-monitor.service config/systemd/dune-public-ip-monitor.timer; do

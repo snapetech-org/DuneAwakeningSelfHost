@@ -80,6 +80,7 @@ import desired_state
 import change_intelligence
 import deployment_assurance
 import update_readiness
+import runtime_security
 import maintenance_outcomes
 import maintenance_planner
 import public_directory
@@ -6654,6 +6655,13 @@ def update_readiness_snapshot(game=None, force=False):
         package_complete = game.get("returncode") in (0, 1) and len(package_tags) == 1 and "incomplete Steam package" not in game_text and "missing package image tar" not in game_text
         steam_settled = bool(package_complete and (not installed or not target or installed == target))
         package_evidence = {"packageTags": package_tags, "missing": [], "errors": [], "source": "check-steam-update.sh"}
+
+    try:
+        runtime_settings = {key: os.environ[key] if key in os.environ else env_file_value(key) for key in runtime_security.KEYS}
+        runtime_security.configuration(ROOT, runtime_settings, candidate.get("imageTag"))
+    except (OSError, ValueError) as exc:
+        package_complete = False
+        package_evidence.setdefault("errors", []).append("runtime security approval rejected: " + str(exc)[:500])
 
     coriolis = update_readiness_coriolis_native()
     latest_set = latest_full_backup_set()

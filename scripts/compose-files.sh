@@ -14,6 +14,10 @@ read_env() {
   printf '%s' "$value"
 }
 
+if [[ -n "${DUNE_GAME_IMAGE-$(read_env DUNE_GAME_IMAGE)}" ]]; then
+  python3 "$script_dir/runtime-security.py" "$env_file" >/dev/null
+fi
+
 file_exists() {
   [[ -f "$1" ]]
 }
