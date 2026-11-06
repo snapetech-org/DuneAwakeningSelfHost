@@ -208,7 +208,7 @@ fi
 
 
 wait_for_admin_ingress() {
-  local timeout="${DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS:-90}" deadline remaining consecutive=0
+  local timeout="${DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS:-300}" deadline remaining consecutive=0
   [[ "$timeout" =~ ^[0-9]{1,3}$ ]] && (( 10#$timeout >= 30 && 10#$timeout <= 300 )) || {
     printf 'DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS must be 30..300 seconds\n' >&2
     return 1

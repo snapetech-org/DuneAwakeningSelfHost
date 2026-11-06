@@ -159,11 +159,14 @@ checkout through `scripts/deploy-admin-panel.sh --test-only`. A failed test
 prevents staging and production mutation. The deployment helper and the native
 test files are manifest-bound so production never runs stale tests against a
 newer Admin entrypoint. Production repeats its normal deployment checks. Ingress readiness requires two
-consecutive successful native checks within a bounded startup window (90
+consecutive successful native checks within a bounded startup window (300
 seconds by default; `DUNE_ADMIN_DEPLOY_INGRESS_READY_SECONDS` permits 30–300).
 Each check still requires a 401 response from unauthenticated detailed status
 and successful direct/LAN health probes. This accommodates initial retained-
 history verification without accepting a failed or unavailable auth response.
+The five-minute default covers measured cold-start ledger verification under
+storage load; the earlier 90-second window expired before authentication probes
+recovered. A shorter configured window still fails closed at its own deadline.
 
 The helper transfers the exact manifest files, including the assurance runner
 and backup-verifier closure required to operate from staging. Every executable
