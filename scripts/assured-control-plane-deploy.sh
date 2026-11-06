@@ -88,6 +88,8 @@ token="$(read_env DUNE_ADMIN_TOKEN)"
 admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
 admin_port="${admin_port:-18080}"
 admin_url="http://127.0.0.1:${admin_port}"
+admin_project="$(read_env COMPOSE_PROJECT_NAME)"
+admin_container="${admin_project:-dune_server}-admin-panel-1"
 prometheus_port="$(read_env DUNE_METRICS_PROMETHEUS_PORT)"
 prometheus_port="${prometheus_port:-19090}"
 prometheus_url="http://127.0.0.1:${prometheus_port}"
@@ -124,11 +126,26 @@ recover_start_response() {
   local deadline=$((SECONDS + verification_timeout))
   while (( SECONDS <= deadline )); do
     if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
-      && python3 - "$work/deployment-status.json" "$manifest" "$reason" >"$work/start-response.json" <<'PY'
-import json, sys
+      && python3 - "$work/deployment-status.json" "$manifest" "$reason" "$code_root/scripts/deployment-assurance.py" "$admin_container" >"$work/start-response.json" <<'PY'
+import json, subprocess, sys
 status=json.load(open(sys.argv[1], encoding="utf-8"))
 manifest=json.load(open(sys.argv[2], encoding="utf-8"))
-matches=[row for row in status.get("openWindows") or [] if row.get("commit") == manifest.get("commit") and row.get("reason") == sys.argv[3] and row.get("manifestSha256") == manifest.get("manifestSha256")]
+matches=[]
+for candidate in status.get("openWindows") or []:
+    if candidate.get("commit") != manifest.get("commit") or candidate.get("reason") != sys.argv[3]:
+        continue
+    row=dict(candidate)
+    if not row.get("manifestSha256"):
+        try:
+            result=subprocess.run([sys.executable,sys.argv[4],"runtime-window","--window-id",str(row.get("id") or ""),"--container",sys.argv[5]],capture_output=True,text=True,timeout=45,check=True)
+            verified=json.loads(result.stdout)
+            if any(verified.get(key) != row.get(key) for key in ("id","commit","reason")) or verified.get("status") != "open":
+                continue
+            row["manifestSha256"]=verified.get("manifestSha256")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+    if row.get("manifestSha256") == manifest.get("manifestSha256"):
+        matches.append(row)
 if len(matches) != 1:
     raise SystemExit(1)
 print(json.dumps(matches[0]))

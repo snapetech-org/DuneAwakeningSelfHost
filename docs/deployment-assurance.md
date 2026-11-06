@@ -157,6 +157,11 @@ use a bounded `DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS` budget
 (default 1800 seconds; permitted range 60–3600). This changes the transport wait,
 not the validation or health gates. Start-response recovery also requires the
 exact manifest digest, commit, and reason before adopting a durable window.
+Older status responses omit the manifest digest. The client then reads only
+public window metadata through the running Admin verifier, which authenticates
+the existing record with its configured HMAC key. Keys and signatures stay in
+the runtime, and a failed verification cannot resume a deployment. Current
+status responses include the digest directly.
 If the client exhausts its recovery budget, check for a late matching window
 before retrying; cancel that exact unused window if no promotion occurred.
 

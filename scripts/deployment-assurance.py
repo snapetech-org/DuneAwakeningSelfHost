@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -240,6 +241,45 @@ def atomic_write(path, document):
         pathlib.Path(temporary).unlink(missing_ok=True)
 
 
+RUNTIME_WINDOW_QUERY = """
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ.get("ADMIN_WORKSPACE", "/workspace"))
+sys.path.insert(0, str(root / "admin"))
+import deployment_assurance, change_intelligence
+state = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(root / "backups/deployment-assurance")))
+evidence = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR", str(root / "backups/operator-evidence")))
+secret = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(root / "config/secrets/change-intelligence-hmac.secret")))
+if not secret.is_file() or secret.is_symlink():
+    raise ValueError("configured verification material is unavailable")
+store = deployment_assurance.Store(state, evidence, root, change_intelligence.read_secret(secret))
+path = store._window_path(sys.argv[1])
+if not path.is_file() or path.is_symlink() or not 1 <= path.stat().st_size <= 4 * 1024 * 1024:
+    raise ValueError("window state is unavailable or outside its size bound")
+window = store._load_window(sys.argv[1])
+print(json.dumps({key: window.get(key) for key in ("id", "commit", "reason", "manifestSha256", "status")}))
+"""
+
+
+def runtime_window_metadata(window_id, container):
+    """Read existing signed runtime metadata; no key or signature leaves it."""
+    if not deployment_assurance.WINDOW_PATTERN.fullmatch(str(window_id)):
+        raise ValueError("deployment assurance window id is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", str(container)):
+        raise ValueError("Admin container name is invalid")
+    result = subprocess.run(
+        ["docker", "exec", "-i", container, "python", "-", window_id],
+        input=RUNTIME_WINDOW_QUERY, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=30, check=False,
+    )
+    if result.returncode:
+        raise ValueError("runtime window HMAC verification failed")
+    document = json.loads(result.stdout)
+    if (not isinstance(document, dict) or document.get("id") != window_id
+            or not deployment_assurance.HASH_PATTERN.fullmatch(str(document.get("manifestSha256") or ""))):
+        raise ValueError("verified runtime window metadata is invalid")
+    return document
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -260,6 +300,9 @@ def main():
     apply_parser.add_argument("--manifest", required=True)
     apply_parser.add_argument("--source", required=True)
     apply_parser.add_argument("--workspace", required=True)
+    runtime_parser = subparsers.add_parser("runtime-window", help="Read HMAC-verified window metadata from an existing Admin runtime")
+    runtime_parser.add_argument("--window-id", required=True)
+    runtime_parser.add_argument("--container", required=True)
     args = parser.parse_args()
     try:
         if args.command == "manifest":
@@ -269,12 +312,14 @@ def main():
             result["path"] = str(pathlib.Path(args.output))
         elif args.command == "verify":
             result = verify(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), workspace=args.workspace)
+        elif args.command == "runtime-window":
+            result = runtime_window_metadata(args.window_id, args.container)
         elif args.command == "archive":
             result = archive_rollback(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), args.workspace, args.output)
         else:
             result = apply_manifest(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), args.source, args.workspace)
         print(json.dumps(result, indent=2, sort_keys=True))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         raise SystemExit(str(exc))
 
 

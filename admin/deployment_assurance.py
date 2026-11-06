@@ -482,7 +482,7 @@ class Store:
         for path in sorted(self.root.glob("deployment-window-*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:200]:
             try:
                 row = self._load_window(path.stem)
-                windows.append({key: row.get(key) for key in ("id", "commit", "reason", "principalId", "startedAt", "expiresAt", "status", "completedAt", "receiptId", "ready")})
+                windows.append({key: row.get(key) for key in ("id", "commit", "reason", "manifestSha256", "principalId", "startedAt", "expiresAt", "status", "completedAt", "receiptId", "ready")})
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 windows.append({"id": path.stem, "status": "invalid", "error": str(exc)})
         receipts = []
