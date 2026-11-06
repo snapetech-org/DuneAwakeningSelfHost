@@ -1232,3 +1232,8 @@ test-host-service-control:
 validate: test-backup-verification-view
 test-backup-verification-view:
 	python3 scripts/test-backup-verification-view.py
+
+.PHONY: test-compose-file-protocol
+validate: test-compose-file-protocol
+test-compose-file-protocol:
+	python3 scripts/test-compose-file-protocol.py

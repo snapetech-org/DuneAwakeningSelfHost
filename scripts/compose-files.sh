@@ -5,7 +5,7 @@ env_file="${1:-${DUNE_ENV_FILE:-.env}}"
 default_files="${DUNE_DEFAULT_COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd -P)"
-"$script_dir/protect-compose-secrets.sh" "$repo_root"
+"$script_dir/protect-compose-secrets.sh" "$repo_root" >&2
 
 read_env() {
   local key="$1" value
