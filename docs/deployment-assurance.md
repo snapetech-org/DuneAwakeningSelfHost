@@ -63,6 +63,13 @@ outcome green. An invalid/missing manifest, private path, missing backup,
 tampered window, expired window, or unreadable required source fails before
 finalization.
 
+For large retained timelines, the readiness metric can verify the latest
+certification event's HMAC, nested receipt digest, and current policy directly.
+It continues to report timeline collection as deferred. Unrelated audit writes
+cannot erase a valid certification between scrapes; an invalid receipt fails
+closed. Deployment still independently requires the complete ledger integrity
+check, desired-state attestation, SLO health, and current response readiness.
+
 The convergence gate defaults to two healthy samples five seconds apart and a
 300-second deadline. It samples desired-state attestation, change-intelligence
 integrity, the current readiness certification, SLO health, and the

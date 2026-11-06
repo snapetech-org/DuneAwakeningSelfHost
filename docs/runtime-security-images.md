@@ -57,6 +57,10 @@ running-image check also rejects a previously local runtime after its approval
 has been disabled. Restore the vendor image through the guarded rollout before
 removing the override.
 
+Game-update readiness receipts bind the qualified runtime image ID, vendor
+image ID, and canonical approval digest. Switching to another runtime or changing
+its approval invalidates an earlier receipt, including a vendor-only receipt.
+
 Deploy control-plane changes through the commit-bound assurance workflow first.
 The image approval does not replace existing recovery proofs, player/recent-session
 checks, readiness gates, Coriolis validation, or post-start hooks. Keep protected
