@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 env_file="${1:-.env}"
 if [[ "$env_file" != /* ]]; then env_file="$repo_root/$env_file"; fi
+reload_idle="${2:-}"
+[[ -z "$reload_idle" || "$reload_idle" == --reload-idle ]] || { printf 'invalid reload option\n' >&2; exit 64; }
 service_user="${DUNE_SERVICE_USER:-$(stat -c %U "$repo_root")}"
 service_group="${DUNE_SERVICE_GROUP:-$(stat -c %G "$repo_root")}"
 service_template="$repo_root/config/systemd/dune-restart-api.service"
@@ -56,3 +58,34 @@ else
   sudo systemctl enable --now dune-restart-api.socket
 fi
 systemctl status dune-restart-api.socket --no-pager -n 3 2>/dev/null || sudo systemctl status dune-restart-api.socket --no-pager -n 3
+
+if [[ "$reload_idle" == --reload-idle ]]; then
+  python3 - <<'PYTHON'
+import pathlib, subprocess
+result = subprocess.run(["systemctl", "show", "dune-restart-api.service", "--property=MainPID", "--value"], capture_output=True, text=True, check=True)
+pid = int(result.stdout.strip() or "0")
+if pid:
+    tasks = pathlib.Path(f"/proc/{pid}/task")
+    if not tasks.is_dir():
+        raise SystemExit("host API process changed during reload admission")
+    for path in tasks.glob("*/children"):
+        if path.read_text().strip():
+            raise SystemExit("host API owns a native command; defer its reload")
+PYTHON
+  # Keep the live listening socket inode: Admin has a bind mount of that inode.
+  if [[ -S /run/dune-restart-api/restart.sock && ! -L /run/dune-restart-api/restart.sock ]]; then
+    sudo chgrp root /run/dune-restart-api/restart.sock
+    sudo chmod 0660 /run/dune-restart-api/restart.sock
+  fi
+  sudo systemctl restart dune-restart-api.service
+  python3 - "$repo_root" <<'PYTHON'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+sys.path[:0] = [str(root / "admin"), str(root / "scripts")]
+import host_service_control
+result = host_service_control.health("/run/dune-restart-api/restart.sock")
+if not result.get("qualified"):
+    raise SystemExit("loaded host recovery protocol did not qualify")
+print("loaded guarded host recovery protocol qualified without a lifecycle operation")
+PYTHON
+fi

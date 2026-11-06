@@ -17,6 +17,8 @@ run_admin_tests() {
     python3 scripts/test-admin-panel-safe-surfaces.py
     python3 scripts/test-docker-api-proxy.py
     python3 scripts/test-deploy-admin-panel.py
+    python3 scripts/test-dune-restart-api.py
+    python3 scripts/test-host-service-control.py
   )
 }
 

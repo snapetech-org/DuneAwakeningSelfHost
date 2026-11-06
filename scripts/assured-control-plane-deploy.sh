@@ -374,6 +374,9 @@ if [[ -n "$stage" ]]; then
   rm -f "$apply_lock"
   apply_lock=""
 fi
+if [[ "$(read_env DUNE_ADMIN_SERVICE_CONTROL_ENABLED)" == true ]]; then
+  ./scripts/install-dune-restart-api.sh "$env_file" --reload-idle
+fi
 ./scripts/deploy-admin-panel.sh "$env_file"
 prometheus_id="$(docker ps -q --filter "label=com.docker.compose.project=dune_server" --filter "label=com.docker.compose.service=prometheus" | head -1)"
 if [[ -n "$prometheus_id" ]]; then

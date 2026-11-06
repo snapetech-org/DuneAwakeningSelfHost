@@ -18,6 +18,8 @@ Restart=on-failure
 RestartSec=2
 TimeoutStartSec=15
 TimeoutStopSec=10800
+# Drain the Python workers before terminating their native child commands.
+KillMode=mixed
 LimitNOFILE=128
 TasksMax=128
 MemoryMax=2G
