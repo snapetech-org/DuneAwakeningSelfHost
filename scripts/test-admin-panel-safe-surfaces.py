@@ -6044,14 +6044,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
     def test_change_intelligence_reconciles_only_stale_authoritative_incidents(self):
         events = []
-        fake_change = type("ChangeStore", (), {"status": lambda self: {"openIncidents": [
+        fake_change = type("ChangeStore", (), {"status": lambda self: {"integrity": {"ok": True}, "openIncidents": [
             {"incidentKey": "desired:drift-active"},
             {"incidentKey": "desired:drift-stale"},
             {"incidentKey": "slo:slo-stale"},
             {"incidentKey": "event:unmanaged"},
         ]}})()
-        fake_desired = type("DesiredStore", (), {"status": lambda self, limit=1000: {"openFindings": [{"id": "drift-active"}]}})()
-        fake_slo = type("SloStore", (), {"status": lambda self, limit=1000: {"openIncidents": []}})()
+        fake_desired = type("DesiredStore", (), {"verified_resolutions": lambda self, ids: {"drift-stale": {"resolvedAt": "2026-11-06T00:00:00Z", "signature": "verified"}}})()
+        fake_slo = type("SloStore", (), {"status": lambda self, limit=1000: {"integrity": {"ok": True}, "openIncidents": []}})()
         originals = {
             "CHANGE_INTELLIGENCE_ENABLED": self.panel.CHANGE_INTELLIGENCE_ENABLED,
             "DESIRED_STATE_ENABLED": self.panel.DESIRED_STATE_ENABLED,
@@ -6072,12 +6072,12 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
 
         result = self.panel.change_intelligence_reconcile_incidents()
-        self.assertEqual(2, result["reconciled"])
+        self.assertEqual(1, result["reconciled"])
         self.assertEqual(
-            [("desired-state-drift-resolved", "drift-stale"), ("slo-incident-resolved", "slo-stale")],
+            [("desired-state-drift-resolved", "drift-stale")],
             [(action, data.get("finding_id") or data.get("incident_id")) for action, _ok, data in events],
         )
-        self.assertTrue(all(ok and data["resolution_source"] == "authoritative-startup-reconciliation" for _action, ok, data in events))
+        self.assertTrue(all(ok and data["resolution_source"] == "verified-authoritative-reconciliation" for _action, ok, data in events))
 
     def test_infrastructure_mounts_change_intelligence_without_causality_claim(self):
         source = self.panel.INDEX
