@@ -1,5 +1,12 @@
 # Assured Change Windows
 
+Large retained ledgers keep full timeline collection deferred during Prometheus
+scrapes. Readiness still exposes the recent fully verified status from the
+bounded status cache, including the signed receipt and current policy checks.
+Missing, expired, future-dated or invalid proof reports not ready; a newly
+recorded change invalidates the status and metrics caches. The separate small
+signed deployment-receipt store remains visible while timeline metrics defer.
+
 DASH can promote a reviewed control-plane commit through one two-phase,
 fail-closed workflow. The outcome is not merely “the deploy command returned
 zero.” A successful receipt proves source provenance, map continuity, current

@@ -7834,11 +7834,17 @@ def retained_metrics_should_defer():
 
 
 def deferred_change_intelligence_metrics():
+    status = change_intelligence_verified_cache()
+    certification = (status or {}).get("readinessCertification") or {}
+    ready = bool(certification.get("currentReady") and certification.get("policyCurrent")
+                 and (certification.get("receiptVerification") or {}).get("ok"))
     return (
         "# HELP dash_change_intelligence_collector_up Change timeline metrics are deferred while the retained ledger is large.\n"
         "# TYPE dash_change_intelligence_collector_up gauge\n"
         "dash_change_intelligence_collector_up 0\n"
         "dash_change_intelligence_metrics_deferred 1\n"
+        f"dash_incident_readiness_certification_ready {int(ready)}\n"
+        + (deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n")
     )
 
 
@@ -10324,6 +10330,11 @@ def ensure_change_intelligence():
 
 def change_intelligence_record_event(event):
     result = change_intelligence_store().record(event, source="admin-audit")
+    with CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
+        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+    with METRICS_DOCUMENT_CACHE_CONDITION:
+        METRICS_DOCUMENT_CACHE.pop("change-intelligence", None)
+        METRICS_DOCUMENT_CACHE_CONDITION.notify_all()
     CHANGE_INTELLIGENCE_RUNTIME.update({
         "ready": True,
         "lastEventAt": time.time(),
@@ -10345,10 +10356,26 @@ def change_intelligence_cached_status(force=False):
         return status
 
 
+def change_intelligence_verified_cache():
+    """Peek without disk work or waiting for an in-flight full verification."""
+    if not CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.acquire(blocking=False):
+        return None
+    try:
+        cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
+        age = time.time() - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
+        if (isinstance(cached, dict) and (cached.get("integrity") or {}).get("ok") is True
+                and 0 <= age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS):
+            return json.loads(json.dumps(cached))
+        return None
+    finally:
+        CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.release()
+
+
 def change_intelligence_public_status(force=False):
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
-    if not force and retained_metrics_should_defer():
+    status = change_intelligence_verified_cache() if not force else None
+    if status is None and not force and retained_metrics_should_defer():
         return {
             "ok": False,
             "enabled": True,
@@ -10366,7 +10393,8 @@ def change_intelligence_public_status(force=False):
             "responseDrillConfirm": CONFIRM_RESPONSE_DRILL,
             "readinessCertificationConfirm": CONFIRM_READINESS_CERTIFICATION,
         }
-    status = change_intelligence_cached_status(force=force)
+    if status is None:
+        status = change_intelligence_cached_status(force=force)
     status.update({
         "enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
         "cacheSeconds": CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS,

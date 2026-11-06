@@ -5784,6 +5784,54 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
         self.assertIn("dash_maintenance_outcome_collector_up 1\n", texts[0][0])
 
+    def test_large_ledger_metrics_reuse_only_recent_verified_readiness(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        status = {"integrity": {"ok": True}, "openIncidents": [], "readinessCertification": {
+            "currentReady": True, "policyCurrent": True, "receiptVerification": {"ok": True}}}
+        with mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", False), mock.patch.object(panel, "retained_metrics_should_defer", return_value=True), mock.patch.object(panel, "change_intelligence_store", side_effect=AssertionError("metrics must not walk the ledger")):
+            panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value=status, updatedAt=time.time())
+            self.assertTrue(panel.change_intelligence_public_status()["integrity"]["ok"])
+            metrics = panel.deferred_change_intelligence_metrics()
+            self.assertIn("dash_change_intelligence_metrics_deferred 1\n", metrics)
+            self.assertIn("dash_incident_readiness_certification_ready 1\n", metrics)
+            for reason in ("expired", "future", "integrity", "receipt", "policy"):
+                value = json.loads(json.dumps(status))
+                updated = time.time()
+                if reason == "expired": updated -= panel.CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS + 1
+                elif reason == "future": updated += 60
+                elif reason == "integrity": value["integrity"]["ok"] = False
+                elif reason == "receipt": value["readinessCertification"]["receiptVerification"]["ok"] = False
+                else: value["readinessCertification"]["policyCurrent"] = False
+                panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value=value, updatedAt=updated)
+                with self.subTest(reason=reason):
+                    self.assertIn("dash_incident_readiness_certification_ready 0\n", panel.deferred_change_intelligence_metrics())
+            panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.acquire()
+            try:
+                self.assertIsNone(panel.change_intelligence_verified_cache())
+            finally:
+                panel.CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK.release()
+        with mock.patch.object(panel, "DEPLOYMENT_ASSURANCE_ENABLED", True), mock.patch.object(panel, "deployment_assurance_store") as store:
+            store.return_value.prometheus.return_value = "dash_deployment_assurance_latest_ready 1\n"
+            self.assertIn("dash_deployment_assurance_latest_ready 1\n", panel.deferred_change_intelligence_metrics())
+
+    def test_recorded_change_invalidates_verified_status_and_metric_document(self):
+        panel = self.panel
+        original = dict(panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        original_metrics = dict(panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(panel.CHANGE_INTELLIGENCE_RUNTIME)
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original))
+        self.addCleanup(lambda: (panel.METRICS_DOCUMENT_CACHE.clear(), panel.METRICS_DOCUMENT_CACHE.update(original_metrics)))
+        self.addCleanup(lambda: panel.CHANGE_INTELLIGENCE_RUNTIME.update(original_runtime))
+        panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(value={"integrity": {"ok": True}}, updatedAt=time.time())
+        panel.METRICS_DOCUMENT_CACHE["change-intelligence"] = {"value": "old-ready"}
+        with mock.patch.object(panel, "change_intelligence_store") as store:
+            store.return_value.record.return_value = {"id": "new-change"}
+            panel.change_intelligence_record_event({"action": "configuration-change"})
+        self.assertIsNone(panel.change_intelligence_verified_cache())
+        self.assertNotIn("change-intelligence", panel.METRICS_DOCUMENT_CACHE)
+
     def test_change_intelligence_verified_status_is_single_flight_cached_and_forceable(self):
         original_store = self.panel.change_intelligence_store
         original_cache = dict(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
