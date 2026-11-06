@@ -58,3 +58,21 @@ are retained privately in `backups/security-reviews/20261106/`.
 Semgrep reports parser limitations on some valid Bash constructs. Bash syntax
 checks independently cover those shell files; the malformed YAML issue template
 was repaired. Scanner coverage limitations remain in the raw evidence.
+
+## Verification results
+
+The final scan of source commit `b10a3c0` reported zero Trivy dependency
+vulnerabilities and zero secrets. Trivy detected no supported configuration
+scanner targets, so the Nginx header behavior was checked independently in an
+isolated container. Semgrep returned 77 unsuppressed audit findings plus one
+existing in-source-suppressed owner-only directory finding in SARIF. Each was
+reviewed against the rationale above; no broad scanner rule was disabled.
+The 12 remaining Semgrep parser diagnostics concern Bash constructs accepted
+by Bash; all 269 tracked shell files passed `bash -n`.
+
+Targeted checks cover 398 unit/regression tests across Admin, the broker,
+HTTP/security boundaries, chat/Discord commands, character slots, release
+packaging, restart/API routing, Compose discovery and public-site rendering.
+The public-site asset checks and Nginx configuration/header checks also passed.
+Raw evidence, individual GitHub dismissal rationales and scan-upload receipts
+are retained in the private evidence directory above.
