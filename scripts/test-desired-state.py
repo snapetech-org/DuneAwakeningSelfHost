@@ -107,6 +107,36 @@ class DesiredStateTests(unittest.TestCase):
                 self.assertTrue(self.store.status()['openFindings'])
                 (self.root/'compose.yaml').write_text('services: {}\n')
 
+    def test_runtime_attestation_accepts_only_reviewed_disabled_brt_aliases(self):
+        legacy = 'DUNE_BRT_DD_ACTION_GATE_PATCH_ENABLED'
+        canonical = 'DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED'
+        old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
+        new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)
+        old['Config']['Env'].append(legacy+'=false')
+        new['Config']['Env'].append(canonical+'=false')
+        self.store.seal(self.snapshot([old]), 'operator', 'initial disabled legacy flag')
+        result = self.store.seal(self.snapshot([new]), 'operator', 'verified disabled alias migration', runtime_transition=self.runtime_transition())
+        self.assertTrue(result['ok'])
+        self.assertTrue(self.store.verify()['ok'])
+
+    def test_runtime_attestation_rejects_enabled_or_arbitrary_aliases(self):
+        cases = [
+            ('DUNE_BRT_DD_ACTION_GATE_PATCH_ENABLED', 'DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED', 'true', 'true'),
+            ('DUNE_BRT_DD_ACTION_GATE_PATCH_ENABLED', 'DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED', 'false', 'true'),
+            ('DUNE_BRT_DD_TOOL_ENABLE_PATCH_ENABLED', 'DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED', 'true', 'false'),
+            ('UNREVIEWED_OLD', 'UNREVIEWED_NEW', 'false', 'false'),
+        ]
+        for legacy, canonical, old_value, new_value in cases:
+            with self.subTest(legacy=legacy, old_value=old_value, new_value=new_value):
+                old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
+                new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)
+                old['Config']['Env'].append(legacy+'='+old_value)
+                new['Config']['Env'].append(canonical+'='+new_value)
+                baseline = self.store.seal(self.snapshot([old]), 'operator', 'reviewed fixture baseline')
+                with self.assertRaises(ValueError):
+                    self.store.seal(self.snapshot([new]), 'operator', 'reject changed flag semantics', runtime_transition=self.runtime_transition())
+                self.assertEqual(self.store.active_baseline()['id'], baseline['baselineId'])
+
     def test_runtime_attestation_rejects_wrong_source_or_candidate(self):
         old = container(service='worker', image='vendor:v1', image_id='sha256:'+'a'*64)
         new = container(service='worker', image='qualified:v2', image_id='sha256:'+'b'*64)

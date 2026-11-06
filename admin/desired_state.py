@@ -258,7 +258,7 @@ def compare_snapshots(baseline, current):
     return changes
 
 
-def validate_runtime_transition(baseline, current, transition):
+def validate_runtime_transition(baseline, current, transition, secret):
     required = {'service', 'fromImageId', 'fromImageRef', 'toImageId', 'toImageRef'}
     if not isinstance(transition, dict) or set(transition) != required:
         raise ValueError('complete runtime image transition required')
@@ -281,6 +281,24 @@ def validate_runtime_transition(baseline, current, transition):
     if len(changes) != 1 or changes[0]['category'] != 'containers' or changes[0]['subject'] != service or changes[0]['change'] != 'modified':
         raise ValueError('unrelated desired-state drift blocks runtime attestation')
     fields = set(changes[0]['details']['changedFields'])
+    if 'envHmacs' in fields:
+        # These two legacy names were replaced by explicit binary-patch names.
+        # Only an already-disabled flag may migrate, with the identical signed
+        # false value. Arbitrary environment renames remain drift.
+        aliases = {
+            'DUNE_BRT_DD_ACTION_GATE_PATCH_ENABLED': 'DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED',
+            'DUNE_BRT_DD_TOOL_ENABLE_PATCH_ENABLED': 'DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED',
+        }
+        old_env, new_env = before.get('envHmacs') or {}, dict(after.get('envHmacs') or {})
+        disabled = secret_hash(secret, 'false')
+        for legacy, canonical in aliases.items():
+            if legacy in old_env and canonical not in old_env and legacy not in new_env and canonical in new_env:
+                if old_env[legacy] != disabled or new_env[canonical] != disabled:
+                    raise ValueError('BRT alias migration must preserve disabled false flags')
+                new_env[legacy] = new_env.pop(canonical)
+        if new_env != old_env:
+            raise ValueError('unreviewed runtime environment drift')
+        fields.remove('envHmacs')
     if not fields <= {'fingerprint', 'imageId', 'imageRef'} or 'imageId' not in fields:
         raise ValueError('runtime settings changed beyond the approved image')
 
@@ -438,7 +456,7 @@ class Store:
                 baseline = self.active_baseline(connection)
                 if baseline is None:
                     raise ValueError('sealed baseline required for runtime attestation')
-                validate_runtime_transition(baseline['snapshot'], snapshot_payload, runtime_transition)
+                validate_runtime_transition(baseline['snapshot'], snapshot_payload, runtime_transition, self.secret)
             if prior:
                 connection.execute("update baselines set active=0 where id=?", (prior["id"],))
             connection.execute(

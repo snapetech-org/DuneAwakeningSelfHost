@@ -102,9 +102,10 @@ or approval authority. Stop after a failed canary and retain its evidence.
 
 After successful native verification, the CLI attests the exact image transition
 through a restricted desired-state seal. The store verifies its signed baseline
-and compares the fresh complete snapshot inside the baseline transaction. Only
-the selected existing container's image ID, image reference, and derived
-fingerprint may change. File changes, environment, mounts, commands, resource
-settings, or another container block attestation. A blocked attestation retains
+and compares the fresh complete snapshot inside the baseline transaction. The
+selected existing container's image ID, image reference, and derived fingerprint
+may change. Two reviewed legacy BRT environment names may migrate to their
+explicit binary-patch names only when both signed values are exactly false. File changes, other environment changes, enabled or changed flag values, mounts,
+commands, resource settings, or another container block attestation. A blocked attestation retains
 the healthy candidate and reports the drift; it does not roll the worker back
 to conceal an unrelated change. No HTTP route starts or replaces a game worker.
