@@ -64,7 +64,7 @@ for support in \
   docs/ecosystem-feature-parity-audit.md \
   admin/feature_readiness_history.py admin/maintenance_planner.py admin/maintenance_outcomes.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
   admin/update_readiness.py admin/runtime_security.py scripts/deployment-assurance.py \
-  scripts/assured-control-plane-deploy.sh scripts/backup-state.sh scripts/restore-state.sh scripts/restore-alert-inbox.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \
+  scripts/assured-control-plane-deploy.sh scripts/lib/snape-curl-auth.sh scripts/backup-state.sh scripts/restore-state.sh scripts/restore-alert-inbox.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \
   scripts/check-rabbitmq-cert-sans.sh scripts/restart-target.sh scripts/install-public-ip-monitor.sh \
   config/systemd/dune-public-ip-monitor.service config/systemd/dune-public-ip-monitor.timer; do
   grep -Fxq "$support" "$work/files.list" || printf '%s\n' "$support" >>"$work/files.list"
