@@ -58,6 +58,18 @@ read_env() {
   awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); print}' "$env_file" | tail -1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
 }
 
+verification_timeout_seconds() {
+  local value
+  value="$(read_env DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS)"
+  value="${value:-1800}"
+  if [[ ! "$value" =~ ^[0-9]{1,4}$ ]] || (( 10#$value < 60 || 10#$value > 3600 )); then
+    printf 'DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS must be 60..3600 seconds\n' >&2
+    return 1
+  fi
+  printf '%d' "$((10#$value))"
+}
+verification_timeout="$(verification_timeout_seconds)"
+
 command -v flock >/dev/null 2>&1 || { printf 'flock is required for assured deployment serialization\n' >&2; exit 1; }
 operation_lock="${DUNE_OPERATION_LOCK_FILE:-backups/admin-panel/operation.lock}"
 operation_lock_wait="${DUNE_OPERATION_LOCK_WAIT_SECONDS:-$(read_env DUNE_OPERATION_LOCK_WAIT_SECONDS)}"
@@ -105,18 +117,18 @@ api_get() {
 }
 
 api_post_file() {
-  curl -fsS --max-time "${2:-300}" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$1" "$admin_url/api/ops/deployment-assurance"
+  curl -fsS --max-time "${2:-$verification_timeout}" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$1" "$admin_url/api/ops/deployment-assurance"
 }
 
 recover_start_response() {
-  local deadline=$((SECONDS + 300))
+  local deadline=$((SECONDS + verification_timeout))
   while (( SECONDS <= deadline )); do
     if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
       && python3 - "$work/deployment-status.json" "$manifest" "$reason" >"$work/start-response.json" <<'PY'
 import json, sys
 status=json.load(open(sys.argv[1], encoding="utf-8"))
 manifest=json.load(open(sys.argv[2], encoding="utf-8"))
-matches=[row for row in status.get("openWindows") or [] if row.get("commit") == manifest.get("commit") and row.get("reason") == sys.argv[3]]
+matches=[row for row in status.get("openWindows") or [] if row.get("commit") == manifest.get("commit") and row.get("reason") == sys.argv[3] and row.get("manifestSha256") == manifest.get("manifestSha256")]
 if len(matches) != 1:
     raise SystemExit(1)
 print(json.dumps(matches[0]))
@@ -237,13 +249,12 @@ PY
 
 finalize_assurance_when_healthy() {
   local timeout interval deadline state failed_health
-  timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
+  timeout="$verification_timeout"
   interval="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS)"
-  timeout="${timeout:-300}"
   interval="${interval:-5}"
   deadline=$((SECONDS + timeout))
   while (( SECONDS <= deadline )); do
-    if ! api_post_file "$work/finish.json" 600 >"$work/finish-response.json"; then
+    if ! api_post_file "$work/finish.json" "$verification_timeout" >"$work/finish-response.json"; then
       if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
         && python3 - "$work/deployment-status.json" "$window_id" "$reason" >"$work/finish-response.json" <<'PY'
 import json, sys
@@ -325,7 +336,7 @@ import json,sys
 document=json.load(open(sys.argv[1],encoding="utf-8"))
 print(json.dumps({"action":"start","commit":document["commit"],"reason":sys.argv[2],"manifest":document,"preChangeBackupPath":sys.argv[3],"sourceRollbackArchive":sys.argv[4],"sourceRollbackSha256":sys.argv[5],"staged":sys.argv[6]=="true","confirm":"START ASSURED CHANGE WINDOW"}))
 PY
-if ! api_post_file "$work/start.json" 300 >"$work/start-response.json" \
+if ! api_post_file "$work/start.json" "$verification_timeout" >"$work/start-response.json" \
   || ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/start-response.json"; then
   recover_start_response
 fi

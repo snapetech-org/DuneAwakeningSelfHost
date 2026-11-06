@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import os
+import re
 import pathlib
 import subprocess
 import importlib.util
@@ -191,6 +193,52 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("scripts/lib/snape-curl-auth.sh", selected)
         self.assertIn("admin/runtime_security.py", selected)
         self.assertTrue(deployment_cli.SUPPORT_FILES.issubset(set(selected)))
+
+    def shell_function(self, name):
+        source = (ROOT / "scripts/assured-control-plane-deploy.sh").read_text()
+        match = re.search(r"^" + name + r"\(\) \{\n.*?^\}", source, re.M | re.S)
+        self.assertIsNotNone(match)
+        return match.group(0)
+
+    def test_verification_wait_budget_is_bounded_and_does_not_evaluate_input(self):
+        source = 'read_env() { printf "%s" "$FIXTURE_TIMEOUT"; }\n' + self.shell_function("verification_timeout_seconds") + "\nverification_timeout_seconds\n"
+        marker = self.root / "must-not-exist"
+        for value, expected in [("", "1800"), ("60", "60"), ("0060", "60"), ("3600", "3600")]:
+            result = subprocess.run(["bash", "-c", source], env={**os.environ, "FIXTURE_TIMEOUT": value}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, expected)
+        for value in ["0", "59", "3601", "-1", "99999999999999999999999", f"1[$(touch {marker})]"]:
+            result = subprocess.run(["bash", "-c", source], env={**os.environ, "FIXTURE_TIMEOUT": value}, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
+
+    def test_start_recovery_waits_for_the_exact_manifest_without_resubmitting(self):
+        work = self.root / "recovery"
+        work.mkdir()
+        manifest = work / "manifest.json"
+        commit, digest = "a" * 40, "b" * 64
+        manifest.write_text(json.dumps({"commit": commit, "manifestSha256": digest}))
+        candidates = [
+            {"id": "wrong-commit", "commit": "c" * 40, "reason": "reviewed fixture", "manifestSha256": digest},
+            {"id": "wrong-manifest", "commit": commit, "reason": "reviewed fixture", "manifestSha256": "d" * 64},
+            {"id": "expected-window", "commit": commit, "reason": "reviewed fixture", "manifestSha256": digest},
+        ]
+        for index, candidate in enumerate(candidates, 1):
+            (work / f"status-{index}.json").write_text(json.dumps({"openWindows": [candidate]}))
+        fixture = '''set -e
+work="$FIXTURE_WORK"
+manifest="$work/manifest.json"
+reason="reviewed fixture"
+verification_timeout=60
+attempts=0
+api_get() { attempts=$((attempts + 1)); cat "$work/status-$attempts.json"; }
+api_post_file() { touch "$work/unexpected-post"; return 1; }
+sleep() { :; }
+''' + self.shell_function("recover_start_response") + "\nrecover_start_response\n"
+        result = subprocess.run(["bash", "-c", fixture], env={**os.environ, "FIXTURE_WORK": str(work)}, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((work / "start-response.json").read_text())["id"], "expected-window")
+        self.assertFalse((work / "unexpected-post").exists())
 
     def test_host_workflow_is_production_guarded_post_hook_safe_and_evidence_complete(self):
         source = (ROOT / "scripts" / "assured-control-plane-deploy.sh").read_text(encoding="utf-8")

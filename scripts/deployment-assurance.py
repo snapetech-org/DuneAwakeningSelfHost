@@ -58,6 +58,7 @@ SUPPORT_FILES = {
     "scripts/deployment-assurance.py",
     "scripts/assured-control-plane-deploy.sh",
     "scripts/lib/snape-curl-auth.sh",
+    "scripts/secret_env.py",
     "scripts/backup-state.sh",
     "scripts/restore-state.sh",
     "scripts/restore-alert-inbox.sh",

@@ -152,6 +152,14 @@ and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
 helper is accepted from the stage.
 
+Backup validation can take minutes on busy storage. Start and finish requests
+use a bounded `DUNE_DEPLOYMENT_ASSURANCE_VERIFICATION_TIMEOUT_SECONDS` budget
+(default 1800 seconds; permitted range 60–3600). This changes the transport wait,
+not the validation or health gates. Start-response recovery also requires the
+exact manifest digest, commit, and reason before adopting a durable window.
+If the client exhausts its recovery budget, check for a late matching window
+before retrying; cancel that exact unused window if no promotion occurred.
+
 Start and finish operations are durable even when a long verification closes
 the HTTP response before the client receives JSON. The runner polls the signed
 window/receipt store, requires one exact commit-and-reason match, and resumes
