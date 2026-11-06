@@ -290,6 +290,75 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             handler.require_token()
         self.assertEqual(["auth-failed"], events)
 
+    def test_concurrent_denials_reserve_one_audit_before_slow_write(self):
+        for limit, action in ((5, "auth-failed"), (0, "auth-throttled")):
+            with self.subTest(action=action):
+                handler = object.__new__(self.panel.Handler)
+                handler.path = "/api/status"
+                handler.command = "GET"
+                handler.client_address = ("192.0.2.10", 12345)
+                handler.headers = {}
+                self.panel.ADMIN_REQUIRE_TOKEN = True
+                self.panel.ADMIN_TOKEN = "real-owner-token"
+                self.panel.RBAC_ENABLED = False
+                self.panel.FEDERATED_AUTH_ENABLED = False
+                self.panel.AUTH_FAILURE_LIMIT = limit
+                self.panel.AUTH_FAILURES.clear()
+                self.panel.AUTH_FAILURE_AUDIT.clear()
+                entered, release, second_denied = threading.Event(), threading.Event(), threading.Event()
+                events, unexpected = [], []
+
+                def slow_audit(name, **kwargs):
+                    events.append(name)
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError("test audit was not released")
+
+                def deny(done=None):
+                    try:
+                        handler.require_token()
+                        unexpected.append("credential admitted")
+                    except PermissionError:
+                        if done:
+                            done.set()
+                    except Exception as exc:
+                        unexpected.append(type(exc).__name__)
+
+                handler.audit = slow_audit
+                first = threading.Thread(target=deny)
+                second = threading.Thread(target=deny, args=(second_denied,))
+                first.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    second.start()
+                    self.assertTrue(second_denied.wait(1), "second denial blocked behind duplicate audit work")
+                finally:
+                    release.set()
+                    first.join(3)
+                    if second.ident is not None:
+                        second.join(3)
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+                self.assertEqual([], unexpected)
+                self.assertEqual([action], events)
+
+    def test_failed_auth_audit_releases_reservation_for_retry(self):
+        handler = object.__new__(self.panel.Handler)
+        calls = []
+
+        def audit(action, **kwargs):
+            calls.append(action)
+            if len(calls) == 1:
+                raise OSError("test write failure")
+
+        handler.audit = audit
+        args = dict(peer="192.0.2.10", credential_bucket="test-bucket", failures=1, now=1000)
+        with self.assertRaises(OSError):
+            handler.audit_auth_failure_once("auth-failed", **args)
+        handler.audit_auth_failure_once("auth-failed", **args)
+        handler.audit_auth_failure_once("auth-failed", **args)
+        self.assertEqual(["auth-failed", "auth-failed"], calls)
+
     def test_dual_control_blocks_without_approval_and_consumes_before_dispatch(self):
         body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
         consumed = []

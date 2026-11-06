@@ -273,6 +273,7 @@ AUTH_FAILURE_WINDOW_SECONDS = 60
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURES = {}
 AUTH_FAILURE_AUDIT = {}
+AUTH_FAILURE_AUDIT_LOCK = threading.Lock()
 AUTH_FAILURE_AUDIT_INTERVAL_SECONDS = 60
 AUDIT_LOCK = threading.Lock()
 STEAM_PROFILE_CACHE_LOCK = threading.Lock()
@@ -19306,6 +19307,27 @@ class Handler(BaseHTTPRequestHandler):
         backup_file(path)
         path.write_text(content, encoding="utf-8")
 
+    def audit_auth_failure_once(self, action, *, peer, credential_bucket, failures, now):
+        key = (peer, credential_bucket, action)
+        # Reserve before durable audit work: a slow ledger must not admit a
+        # second writer for the same interval on every concurrent probe.
+        with AUTH_FAILURE_AUDIT_LOCK:
+            previous = AUTH_FAILURE_AUDIT.get(key)
+            if now - float(previous or 0) < AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
+                return
+            AUTH_FAILURE_AUDIT[key] = now
+        try:
+            self.audit(action, ok=False, failures=failures)
+        except BaseException:
+            # A failed write must leave the next denial able to retry it.
+            with AUTH_FAILURE_AUDIT_LOCK:
+                if AUTH_FAILURE_AUDIT.get(key) == now:
+                    if previous is None:
+                        AUTH_FAILURE_AUDIT.pop(key, None)
+                    else:
+                        AUTH_FAILURE_AUDIT[key] = previous
+            raise
+
     def require_token(self):
         if not ADMIN_REQUIRE_TOKEN:
             return
@@ -19334,17 +19356,15 @@ class Handler(BaseHTTPRequestHandler):
                 principal = None
         if not principal:
             if len(failures) >= AUTH_FAILURE_LIMIT:
-                audit_key = (peer, credential_bucket, "auth-throttled")
-                if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
-                    self.audit("auth-throttled", ok=False, failures=len(failures))
-                    AUTH_FAILURE_AUDIT[audit_key] = now
+                self.audit_auth_failure_once("auth-throttled", peer=peer,
+                                             credential_bucket=credential_bucket,
+                                             failures=len(failures), now=now)
                 raise PermissionError("too many failed admin token attempts")
             failures.append(now)
             AUTH_FAILURES[failure_key] = failures
-            audit_key = (peer, credential_bucket, "auth-failed")
-            if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
-                self.audit("auth-failed", ok=False, failures=len(failures))
-                AUTH_FAILURE_AUDIT[audit_key] = now
+            self.audit_auth_failure_once("auth-failed", peer=peer,
+                                         credential_bucket=credential_bucket,
+                                         failures=len(failures), now=now)
             raise PermissionError("invalid admin token")
         AUTH_FAILURES.pop(failure_key, None)
         required = access_control.required_capability(getattr(self, "command", "GET"), self.path)
