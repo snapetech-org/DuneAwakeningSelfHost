@@ -6641,7 +6641,13 @@ def update_readiness_snapshot(game=None, force=False):
 
     try:
         runtime_settings = {key: os.environ[key] if key in os.environ else env_file_value(key) for key in runtime_security.KEYS}
-        runtime_security.configuration(ROOT, runtime_settings, candidate.get("imageTag"))
+        runtime_approval = runtime_security.configuration(ROOT, runtime_settings, candidate.get("imageTag"))
+        if runtime_approval:
+            candidate = {**candidate, "runtimeSecurity": {
+                "imageId": runtime_approval["imageId"],
+                "vendorImageId": runtime_approval["vendorImageId"],
+                "approvalSha256": hashlib.sha256(json.dumps(runtime_approval, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            }}
     except (OSError, ValueError) as exc:
         package_complete = False
         package_evidence.setdefault("errors", []).append("runtime security approval rejected: " + str(exc)[:500])

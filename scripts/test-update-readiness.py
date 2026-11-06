@@ -83,6 +83,27 @@ class UpdateReadinessTests(unittest.TestCase):
         self.assertFalse(self.store.status(self.snapshot(tag="dune_sb_1_4_11_0"), now=1100)["currentReceiptReady"])
         self.assertFalse(self.store.status(self.snapshot(), now=1701)["currentReceiptReady"])
 
+    def test_runtime_replacement_or_approval_change_invalidates_vendor_receipt(self):
+        baseline = self.snapshot()
+        self.store.certify(baseline, "owner", now=1000)
+        runtime = self.snapshot()
+        runtime["candidate"]["runtimeSecurity"] = {
+            "imageId": "sha256:" + "a" * 64,
+            "vendorImageId": "sha256:" + "b" * 64,
+            "approvalSha256": "c" * 64,
+        }
+        self.assertFalse(self.store.status(runtime, now=1100)["currentReceiptReady"])
+        self.store.certify(runtime, "owner", now=1100)
+        self.assertTrue(self.store.status(runtime, now=1101)["currentReceiptReady"])
+        for key in runtime["candidate"]["runtimeSecurity"]:
+            changed = json.loads(json.dumps(runtime))
+            changed["candidate"]["runtimeSecurity"][key] = ("sha256:" if key.endswith("ImageId") or key == "imageId" else "") + "d" * 64
+            self.assertFalse(self.store.status(changed, now=1101)["currentReceiptReady"])
+        self.assertFalse(self.store.status(baseline, now=1101)["currentReceiptReady"])
+        runtime["candidate"]["runtimeSecurity"]["imageId"] = "mutable:tag"
+        with self.assertRaisesRegex(ValueError, "runtime security digest"):
+            update_readiness.normalize_snapshot(runtime)
+
     def test_nested_and_outer_tampering_fail(self):
         document = self.store.certify(self.snapshot(), "owner", now=1000)["document"]
         nested = json.loads(json.dumps(document))
