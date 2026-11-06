@@ -194,6 +194,23 @@ class DesiredStateTests(unittest.TestCase):
         self.assertTrue(status["baselineHistory"][0]["active"])
         self.assertFalse(status["baselineHistory"][1]["active"])
 
+    def test_resolution_reconciliation_requires_existing_signed_resolved_finding(self):
+        self.store.seal(self.snapshot(), "operator", "baseline", at=1000)
+        (self.root / ".env").write_text("DRIFT=yes\n")
+        self.store.observe(self.snapshot(at=1060), at=1060)
+        finding = self.store.status()["openFindings"][0]["id"]
+        self.assertEqual({}, self.store.verified_resolutions([finding, "missing"]))
+        self.store.seal(self.snapshot(at=1070), "operator", "approved", at=1070)
+        evidence = self.store.verified_resolutions([finding, "missing"])
+        self.assertEqual({finding}, set(evidence))
+        self.assertTrue(evidence[finding]["resolvedAt"])
+        connection = sqlite3.connect(self.database)
+        connection.execute("update findings set resolved_at=1071 where id=?", (finding,))
+        connection.commit()
+        connection.close()
+        with self.assertRaisesRegex(ValueError, "failed verification"):
+            self.store.verified_resolutions([finding])
+
     def test_tampering_and_missing_triggers_fail_verification(self):
         self.store.seal(self.snapshot(), "operator", "baseline", at=1000)
         connection = sqlite3.connect(self.database)

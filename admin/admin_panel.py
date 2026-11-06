@@ -10303,25 +10303,27 @@ def change_intelligence_reconcile_incidents():
     """Close imported incident opens that authoritative stores already resolved."""
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": True, "reconciled": 0, "skipped": True}
-    open_incidents = change_intelligence_cached_status(force=True).get("openIncidents") or []
-    desired_open = set()
-    slo_open = set()
+    status = change_intelligence_cached_status(force=True)
+    if not (status.get("integrity") or {}).get("ok"):
+        raise ValueError("change-intelligence ledger failed verification before reconciliation")
+    open_incidents = status.get("openIncidents") or []
+    desired_resolved = {}
     if DESIRED_STATE_ENABLED:
-        desired_open = {str(row.get("id") or "") for row in desired_state_store().status(limit=1000).get("openFindings") or []}
-    if OPERATIONAL_SLO_ENABLED:
-        slo_open = {str(row.get("id") or "") for row in operational_slo_store().status(limit=1000).get("openIncidents") or []}
+        desired_ids = [str(row.get("incidentKey") or "").removeprefix("desired:")
+                       for row in open_incidents if str(row.get("incidentKey") or "").startswith("desired:")]
+        if desired_ids:
+            desired_resolved = desired_state_store().verified_resolutions(desired_ids)
     reconciled = 0
     for incident in open_incidents:
         key = str(incident.get("incidentKey") or "")
-        if key.startswith("desired:") and DESIRED_STATE_ENABLED:
+        if key.startswith("desired:"):
             finding_id = key.removeprefix("desired:")
-            if finding_id not in desired_open:
-                audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id, resolution_source="authoritative-startup-reconciliation")
-                reconciled += 1
-        elif key.startswith("slo:") and OPERATIONAL_SLO_ENABLED:
-            incident_id = key.removeprefix("slo:")
-            if incident_id not in slo_open:
-                audit_event("slo-incident-resolved", ok=True, incident_id=incident_id, resolution_source="authoritative-startup-reconciliation")
+            evidence = desired_resolved.get(finding_id)
+            if evidence:
+                audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id,
+                            resolution_source="verified-authoritative-reconciliation",
+                            authoritative_resolved_at=evidence["resolvedAt"],
+                            authoritative_finding_signature=evidence["signature"])
                 reconciled += 1
     CHANGE_INTELLIGENCE_RUNTIME["reconciled"] = reconciled
     return {"ok": True, "reconciled": reconciled, "skipped": False}
@@ -10333,6 +10335,7 @@ def ensure_change_intelligence():
     try:
         change_intelligence_store()
         catchup = change_intelligence_import_history()
+        change_intelligence_reconcile_incidents()
         # Full incident reconciliation verifies the retained HMAC ledger and
         # can be expensive on a large history. It must not delay the admin
         # socket or strand the maintenance executor during container startup.

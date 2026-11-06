@@ -5712,6 +5712,33 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("SEAL DESIRED STATE", source)
         self.assertIn("ACKNOWLEDGE CONFIGURATION DRIFT", source)
 
+    def test_reconciliation_only_closes_positively_verified_desired_resolutions(self):
+        events = []
+        originals = {name: getattr(self.panel, name) for name in (
+            "CHANGE_INTELLIGENCE_ENABLED", "DESIRED_STATE_ENABLED", "change_intelligence_cached_status",
+            "desired_state_store", "audit_event")}
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        self.panel.CHANGE_INTELLIGENCE_ENABLED = True
+        self.panel.DESIRED_STATE_ENABLED = True
+        self.panel.change_intelligence_cached_status = lambda force=False: {
+            "integrity": {"ok": True}, "openIncidents": [
+                {"incidentKey": "desired:" + value} for value in ("resolved", "missing", "active")] +
+                [{"incidentKey": "slo:missing"}]}
+        seen = []
+        self.panel.desired_state_store = lambda: type("Store", (), {
+            "verified_resolutions": lambda self, ids: seen.extend(ids) or {
+                "resolved": {"resolvedAt": "2026-11-06T00:00:00Z", "signature": "signed"}}})()
+        self.panel.audit_event = lambda action, **data: events.append((action, data))
+        self.assertEqual(1, self.panel.change_intelligence_reconcile_incidents()["reconciled"])
+        self.assertEqual({"resolved", "missing", "active"}, set(seen))
+        self.assertEqual("resolved", events[0][1]["finding_id"])
+        self.assertEqual("signed", events[0][1]["authoritative_finding_signature"])
+        self.panel.change_intelligence_cached_status = lambda force=False: {"integrity": {"ok": False}}
+        with self.assertRaisesRegex(ValueError, "failed verification"):
+            self.panel.change_intelligence_reconcile_incidents()
+        self.assertEqual(1, len(events))
+
     def test_change_intelligence_status_metrics_and_capsule_are_read_only(self):
         original_status = self.panel.change_intelligence_public_status
         original_store = self.panel.change_intelligence_store

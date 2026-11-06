@@ -423,6 +423,23 @@ class Store:
             connection.close()
         return {"ok": True, "baselineId": baseline_id, "createdAt": _iso(now), "snapshotSha256": snapshot_sha, "signature": signature}
 
+    def verified_resolutions(self, finding_ids):
+        """Return positive, signed resolution evidence from one SQLite snapshot."""
+        self.initialize_if_needed()
+        connection = self.connect(readonly=True)
+        try:
+            connection.execute("begin")
+            if not self.verify(connection).get("ok"):
+                raise ValueError("desired-state resolution evidence failed verification")
+            result = {}
+            for finding_id in set(finding_ids):
+                row = connection.execute("select * from findings where id=?", (finding_id,)).fetchone()
+                if row is not None and row["resolved_at"] is not None:
+                    result[finding_id] = {"resolvedAt": _iso(row["resolved_at"]), "signature": row["signature"]}
+            return result
+        finally:
+            connection.close()
+
     def active_baseline(self, connection=None):
         own = connection is None
         connection = connection or self.connect(readonly=True)
