@@ -138,6 +138,13 @@ mode-`0600` document contains:
 
 ## Push And Promote
 
+When CPU affinity is enabled, review the host-generated overlay before deploying.
+It must cover `docker-api-broker`, `admin-panel`, and `admin-panel-ingress`, as
+well as running map services. Regenerate it with the native topology helper,
+preserve existing CPU pool overrides, and review changed assignments before
+applying. Keep this host-specific generated file outside Git; the normal
+coverage and application checks remain mandatory.
+
 Run from the reviewed source checkout:
 
 ```bash
