@@ -19,11 +19,15 @@ def identity(value):
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
 
 
+def _walk_error(error):
+    raise error
+
+
 def inventory(root):
     files = {}
     directories = 0
     total = 0
-    for directory, children, names in os.walk(root, followlinks=False):
+    for directory, children, names in os.walk(root, followlinks=False, onerror=_walk_error):
         directories += 1
         if directories + len(files) > MAX_FILES:
             raise ValueError("backup verification inventory exceeds its file bound")
@@ -40,7 +44,7 @@ def inventory(root):
             if name.endswith(".sqlite3-shm") or (name.endswith(".sqlite3-wal") and metadata.st_size == 0):
                 continue
             total += metadata.st_size
-            if total > MAX_BYTES or len(files) >= MAX_FILES:
+            if total > MAX_BYTES or directories + len(files) >= MAX_FILES:
                 raise ValueError("backup verification copy exceeds its size bound")
             files[path.relative_to(root)] = identity(metadata)
     return files, total

@@ -68,6 +68,13 @@ class VerificationReadViewTests(unittest.TestCase):
                         self.fail('unsafe view admitted')
                 link.unlink()
 
+    def test_unreadable_inventory_fails_instead_of_silently_omitting_data(self):
+        with mock.patch.object(view.os, 'scandir', side_effect=PermissionError('fixture inventory inaccessible')):
+            with self.assertRaises(PermissionError):
+                with view.local_read_view(self.source, scratch_root=self.scratch):
+                    self.fail('unreadable recovery data omitted')
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
     def test_size_bound_and_space_reserve_fail_before_copying(self):
         with mock.patch.object(view, 'MAX_BYTES', 1):
             with self.assertRaisesRegex(ValueError, 'size bound'):
