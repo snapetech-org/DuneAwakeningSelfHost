@@ -6,7 +6,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_admin_tests() {
   (
     cd "$script_dir/.."
-    python3 -m py_compile admin/*.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/change-intelligence.py scripts/deployment-assurance.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
+    python3 -m py_compile admin/*.py scripts/check-current-steam-build.py scripts/snapshot-audit-ledger.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/change-intelligence.py scripts/deployment-assurance.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
     python3 -m unittest scripts/test-cosmetics-admin.py
     python3 scripts/test-restore-drill.py
     python3 scripts/test-operational-slo.py
