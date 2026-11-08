@@ -940,3 +940,12 @@ rollback image. Recreate only the three running utility services with
 broker and admin health checks, RabbitMQ authentication paths, the private
 admin ingress, and unchanged game-worker container IDs. Do not substitute this
 image for `admin-chat-commands`, which uses a different vendor payload.
+
+`admin-chat-commands` instead uses the separately qualified
+`snape/dune-db-utils:python-security-2162777` image by default. It must be built
+from the exact 2162777 vendor image, retain that image's complete base-layer
+lineage, and pass a fresh zero-HIGH/zero-CRITICAL scan plus the native chat
+tests. Before promotion, record the old and candidate image IDs, take a fresh
+scoped backup, and verify a candidate `--healthcheck` invocation. Recreate only
+`admin-chat-commands` with `--no-deps --pull never`, then verify its health and
+prove every game-worker container ID is unchanged.

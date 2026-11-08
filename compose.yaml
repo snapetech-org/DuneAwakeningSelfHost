@@ -1305,7 +1305,7 @@ services:
           - admin-panel-ingress
 
   admin-chat-commands:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    image: ${DUNE_ADMIN_CHAT_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2162777}
     restart: unless-stopped
     read_only: true
     cap_drop:

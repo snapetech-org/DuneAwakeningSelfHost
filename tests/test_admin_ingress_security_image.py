@@ -32,7 +32,11 @@ class AdminIngressSecurityImageTest(unittest.TestCase):
             r"(?ms)^  admin-chat-commands:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:)",
             compose,
         ).group("body")
-        self.assertIn("seabass-server-db-utils:${DUNE_IMAGE_TAG}", chat)
+        self.assertIn(
+            "${DUNE_ADMIN_CHAT_SECURITY_IMAGE:-"
+            "snape/dune-db-utils:python-security-2162777}",
+            chat,
+        )
         self.assertNotIn(qualified, chat)
 
 
