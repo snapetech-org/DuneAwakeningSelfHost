@@ -34,6 +34,10 @@ MAX_STATS_IN_FLIGHT = 8
 
 ID_RE = re.compile(r"[a-fA-F0-9]{12,64}\Z")
 PG_NAME_RE = re.compile(r"dash-restore-drill-[a-f0-9]{12}\Z")
+PG_IMAGES = {
+    "registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13",
+    "snape/dune-postgres:security-17.4-alpine321-fc13",
+}
 RMQ_NAME_RE = re.compile(r"dash-rmq-restore-drill-[A-Za-z0-9_.-]{1,64}-[a-f0-9]{10}\Z")
 RMQ_IMAGE_RE = re.compile(
     r"registry\.funcom\.com/funcom/self-hosting/seabass-server-rabbitmq:[A-Za-z0-9._-]{1,128}\Z"
@@ -261,7 +265,7 @@ def validate_restore_create(name: str, spec: dict) -> str | None:
     if labels == {DRILL_LABELS["pg"][0]: "true"}:
         role = "pg"
         allowed_top = {"Image", "User", "Env", "Labels", "StopTimeout", "HostConfig"}
-        if not PG_NAME_RE.fullmatch(name) or spec.get("Image") != "registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13":
+        if not PG_NAME_RE.fullmatch(name) or spec.get("Image") not in PG_IMAGES:
             return None
         expected_env = {
             "POSTGRES_DB": "drill", "POSTGRES_USER": "dune",
@@ -304,7 +308,7 @@ def safe_drill_role(inspected: dict) -> str | None:
     labels = config.get("Labels") or {}
     if labels.get(DRILL_LABELS["pg"][0]) == "true":
         role = "pg"
-        if config.get("Image") != "registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13":
+        if config.get("Image") not in PG_IMAGES:
             return None
     elif labels.get(DRILL_LABELS["rabbitmq"][0]) == "true":
         role = "rabbitmq"

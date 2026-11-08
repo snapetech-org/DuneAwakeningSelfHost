@@ -87,7 +87,9 @@ current_refs() {
       printf '%s:%s\n' "$repo" "$image_tag"
     done
   fi
-  printf '%s\n' 'registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13'
+  printf '%s\n' \
+    'registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13' \
+    "${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}"
 }
 
 protected_image_ids() {

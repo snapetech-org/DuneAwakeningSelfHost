@@ -4,7 +4,7 @@ secrets:
 
 services:
   postgres-replica:
-    image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
+    image: ${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}
     restart: unless-stopped
     depends_on:
       postgres:

@@ -43,7 +43,7 @@ replication_slot="${replication_slot:-${POSTGRES_REMOTE_REPLICATION_SLOT:-$(read
 replication_slot="${replication_slot:-dune_standby_remote}"
 primary_host="${POSTGRES_REPLICATION_PRIMARY_HOST:-$(read_env POSTGRES_REPLICATION_PRIMARY_HOST)}"
 primary_port="${POSTGRES_REPLICATION_PUBLIC_PORT:-$(read_env POSTGRES_REPLICATION_PUBLIC_PORT)}"; primary_port="${primary_port:-15434}"
-image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
+image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 db="${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}"; db="${db:-dune_sb_1_4_0_0}"
 confirm="${CONFIRM_REBUILD_POSTGRES_STANDBY:-no}"
 network_mode="${DUNE_POSTGRES_STANDBY_NETWORK_MODE:-$(read_env DUNE_POSTGRES_STANDBY_NETWORK_MODE)}"

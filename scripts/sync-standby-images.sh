@@ -18,7 +18,7 @@ fi
 
 remote="${remote:-$(read_env POSTGRES_REMOTE_REPLICA_HOST)}"
 image_tag="${DUNE_IMAGE_TAG:-$(read_env DUNE_IMAGE_TAG)}"
-postgres_image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
+postgres_image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 
 if [[ -z "$remote" || -z "$image_tag" ]]; then
   printf 'POSTGRES_REMOTE_REPLICA_HOST and DUNE_IMAGE_TAG are required\n' >&2

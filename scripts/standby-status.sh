@@ -38,7 +38,7 @@ rmq_image="registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${ima
 director_image="registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${image_tag}"
 text_router_image="registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${image_tag}"
 db_utils_image="registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${image_tag}"
-postgres_image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
+postgres_image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 
 printf '== primary replication slot: %s ==\n' "$slot"
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "

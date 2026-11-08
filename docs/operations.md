@@ -1,5 +1,17 @@
 # Operations
 
+## Qualified PostgreSQL security image
+
+The primary, optional local replica, remote-replica helpers, and disposable
+restore drill default to `snape/dune-postgres:security-17.4-alpine321-fc13`.
+The image is an Alpine package refresh layered on exact vendor image ID
+`sha256:3a6efbd2d908f0acdafca6f4a6ffe5a3eb77d4ec634d6f9359bfcb0a36538531`;
+it preserves PostgreSQL server 17.4. Build it only from the prequalified local
+base alias with `scripts/build-postgres-security-image.sh`, then require a zero
+HIGH/CRITICAL image scan, an isolated database smoke test, and a current logical
+dump restore before handoff. Primary and standby rollout remains operator-only
+and must preserve the zero-player, fresh-backup, replication, and rollback gates.
+
 This page covers state management for the Compose lab. Commands assume the default `.env` file; pass `--env-file` directly if you use a different environment.
 
 Set `CONTAINER_RUNTIME=podman` when testing with Podman-compatible Compose commands:

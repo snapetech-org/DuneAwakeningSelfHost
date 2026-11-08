@@ -18,7 +18,7 @@ docker() {
     "image inspect --format")
       case "${5:-}" in
         *:current-tag) echo sha256:current ;;
-        *igw-postgres:17.4-alpine-fc-13) echo sha256:postgres ;;
+        *igw-postgres:17.4-alpine-fc-13|*dune-postgres:security-17.4-alpine321-fc13) echo sha256:postgres ;;
       esac
       return 0
       ;;

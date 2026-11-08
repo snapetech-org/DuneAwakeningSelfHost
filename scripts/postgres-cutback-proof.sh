@@ -33,7 +33,7 @@ db="${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}"; db="${db:-dune_sb_1_4_0_0}"
 postgres_password="${POSTGRES_DUNE_PASSWORD:-$(read_env POSTGRES_DUNE_PASSWORD)}"
 source_host="${POSTGRES_REPLICATION_PRIMARY_HOST:-$(read_env POSTGRES_REPLICATION_PRIMARY_HOST)}"
 source_port="${POSTGRES_REPLICATION_PUBLIC_PORT:-$(read_env POSTGRES_REPLICATION_PUBLIC_PORT)}"; source_port="${source_port:-15434}"
-image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
+image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 status_rc=0
 
 if [[ -z "$target" || -z "$target_root" || -z "$seal_file" ]]; then

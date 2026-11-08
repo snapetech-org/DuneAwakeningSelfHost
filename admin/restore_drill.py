@@ -21,7 +21,7 @@ import time
 import urllib.parse
 
 
-DEFAULT_IMAGE = "registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13"
+DEFAULT_IMAGE = "snape/dune-postgres:security-17.4-alpine321-fc13"
 CONTAINER_PREFIX = "dash-restore-drill-"
 LABEL_KEY = "com.dash.restore-drill"
 REQUIRED_TABLES = (

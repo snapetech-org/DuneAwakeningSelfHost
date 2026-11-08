@@ -48,6 +48,16 @@ class DockerApiProxyPolicyTests(unittest.TestCase):
             proxy.validate_restore_create("dash-restore-drill-a1b2c3d4e5f6", spec), "pg"
         )
 
+    def test_rejects_unapproved_postgres_restore_image(self):
+        source = self._file("restore-drill/.source-unapproved.dump")
+        passwd = self._file("restore-drill/.passwd-unapproved")
+        group = self._file("restore-drill/.group-unapproved")
+        spec = restore_drill.build_container_spec(
+            source, host_passwd=passwd, host_group=group,
+            run_uid=1000, run_gid=1000, image="example.invalid/postgres:latest",
+        )
+        self.assertIsNone(proxy.validate_restore_create("dash-restore-drill-a1b2c3d4e5f6", spec))
+
     def test_rejects_privileged_or_host_network_restore_profile(self):
         source = self._file("restore-drill/.source-dump")
         passwd = self._file("restore-drill/.passwd-test")

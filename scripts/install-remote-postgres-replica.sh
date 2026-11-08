@@ -12,7 +12,7 @@ trap cleanup EXIT
 env_file="${1:-.env}"
 remote="${2:-${POSTGRES_REMOTE_REPLICA_HOST:-}}"
 remote_root="${3:-${POSTGRES_REMOTE_REPLICA_ROOT:-/srv/dune-postgres-replica}}"
-image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
+image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 db="${DUNE_DATABASE:-dune_sb_1_4_0_0}"
 remote_port="$(awk -F= '/^POSTGRES_REMOTE_REPLICA_HOST_PORT=/{print $2}' "$env_file" 2>/dev/null | tail -1 || true)"
 network_mode="$(awk -F= '/^DUNE_POSTGRES_STANDBY_NETWORK_MODE=/{print $2}' "$env_file" 2>/dev/null | tail -1 || true)"
