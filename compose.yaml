@@ -1271,7 +1271,7 @@ services:
       start_period: 10s
 
   admin-panel-ingress:
-    image: caddy:2-alpine
+    image: ${DUNE_ADMIN_INGRESS_IMAGE:-snape/dune-admin-caddy:security-2.11.3}
     restart: unless-stopped
     mac_address: 02:42:ac:1f:f0:08
     depends_on:

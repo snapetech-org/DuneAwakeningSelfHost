@@ -913,3 +913,16 @@ Before changing `DUNE_IMAGE_TAG`:
 - Attempt Hagga Basin login before testing cross-map routing.
 
 Rollback means restoring the old image tag and restoring state from the backups taken before the upgrade. Do not mix a downgraded image tag with post-upgrade database state unless you have verified the schema did not change.
+
+## Admin ingress security image
+
+`admin-panel-ingress` uses the locally qualified
+`snape/dune-admin-caddy:security-2.11.3` image by default. Build it from the
+exact running image with `scripts/build-admin-ingress-security-image.sh`. The
+builder applies only Alpine package security updates, requires the Caddy
+application version and commit to remain identical, validates the production
+Caddyfile, and verifies the patched Brotli package. Promotion must scan the
+candidate for zero CRITICAL findings, preserve the previous image ID for
+rollback, recreate only `admin-panel-ingress` with `--no-deps --pull never`,
+verify the private HTTP endpoint, and prove every game-worker container ID is
+unchanged.
