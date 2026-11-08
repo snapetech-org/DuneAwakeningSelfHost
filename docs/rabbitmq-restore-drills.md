@@ -35,15 +35,27 @@ make rabbitmq-restore-drill
 make rabbitmq-restore-drill-status
 ```
 
-The latest complete directory beneath `backups/` is selected by default. A
-usable set must contain bounded regular files named `manifest.txt`,
-`config.tgz`, `config-tls.tgz`, `rabbitmq-admin.tgz`, and
-`rabbitmq-game.tgz`. Requested paths must remain under the workspace backup
-root. Symlinked sets, missing layers, empty files, and oversized archives fail
-closed. Automatic selection compares the oldest required archive/manifest
-mtime, anchored by recorded creation timestamps in the manifest and backup
-name. Directory modification times are ignored: inspecting or copying an old
-set must not make its recovery data appear fresh.
+The latest complete supported directory is selected by default. The drill
+accepts both backup formats produced by DASH:
+
+- legacy split sets directly beneath `backups/`, containing bounded regular
+  files named `manifest.txt`, `config.tgz`, `config-tls.tgz`,
+  `rabbitmq-admin.tgz`, and `rabbitmq-game.tgz`; and
+- scheduled full backups beneath `backups/admin-panel/maintenance/`, containing
+  `manifest.json`, `config-and-env.tgz`, and `rabbitmq.tgz`.
+
+A scheduled manifest must declare a complete full backup with both `config`
+and `rabbitmq` captured and required, no missing coverage, and artifact paths
+and byte counts that match the bounded regular files. The two broker states
+are selected from their fixed `rabbitmq/admin` and `rabbitmq/game` prefixes in
+the consolidated archive.
+
+Requested paths must remain under the workspace backup root. Symlinked sets,
+missing layers, empty files, and oversized archives fail closed. Automatic
+selection compares the oldest required archive/manifest mtime, anchored by
+recorded creation timestamps in the manifest and backup name. Directory
+modification times are ignored: inspecting or copying an old set must not make
+its recovery data appear fresh.
 
 ## Isolation contract
 

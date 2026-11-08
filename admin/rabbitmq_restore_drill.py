@@ -81,16 +81,93 @@ def _bounded_regular(path, maximum):
     return 0 < size <= int(maximum)
 
 
-BACKUP_LAYERS = ("manifest.txt", "config.tgz", "config-tls.tgz", "rabbitmq-admin.tgz", "rabbitmq-game.tgz")
+LEGACY_BACKUP_BOUNDS = {
+    "manifest.txt": 1024 * 1024,
+    "config.tgz": 256 * 1024**2,
+    "config-tls.tgz": 64 * 1024**2,
+    "rabbitmq-admin.tgz": 8 * 1024**3,
+    "rabbitmq-game.tgz": 8 * 1024**3,
+}
+SCHEDULED_BACKUP_BOUNDS = {
+    "manifest.json": 1024 * 1024,
+    "config-and-env.tgz": 256 * 1024**2,
+    "rabbitmq.tgz": 16 * 1024**3,
+}
+
+
+def _scheduled_manifest(candidate):
+    try:
+        manifest = json.loads((candidate / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("scheduled backup manifest is unreadable") from exc
+    coverage = manifest.get("coverage") or {}
+    captured = set(coverage.get("captured") or [])
+    required = set(coverage.get("required") or [])
+    artifacts = manifest.get("artifacts") or {}
+    if (
+        manifest.get("action") != "backup"
+        or manifest.get("target") != "all"
+        or coverage.get("complete") is not True
+        or coverage.get("missing") not in ([], None)
+        or not {"config", "rabbitmq"}.issubset(captured)
+        or not {"config", "rabbitmq"}.issubset(required)
+    ):
+        raise ValueError("scheduled backup manifest does not declare complete RabbitMQ coverage")
+    for name, filename in (("config", "config-and-env.tgz"), ("rabbitmq", "rabbitmq.tgz")):
+        artifact = artifacts.get(name) or {}
+        if (
+            pathlib.PurePosixPath(str(artifact.get("path") or "")).name != filename
+            or int(artifact.get("bytes") or 0) != (candidate / filename).stat().st_size
+            or not artifact.get("added")
+            or artifact.get("skipped") not in ([], None)
+        ):
+            raise ValueError(f"scheduled backup manifest has invalid {name} artifact metadata")
+    created = manifest.get("createdAt")
+    if not isinstance(created, (int, float)) or isinstance(created, bool) or created <= 0:
+        raise ValueError("scheduled backup manifest has an invalid creation timestamp")
+    return manifest
+
+
+def backup_layout(candidate):
+    candidate = pathlib.Path(candidate)
+    if all(_bounded_regular(candidate / name, maximum) for name, maximum in LEGACY_BACKUP_BOUNDS.items()):
+        return {
+            "name": "legacy-split",
+            "layers": tuple(LEGACY_BACKUP_BOUNDS),
+            "config": "config.tgz",
+            "tls": "config-tls.tgz",
+            "brokers": {
+                "admin": {"archive": "rabbitmq-admin.tgz", "prefix": None},
+                "game": {"archive": "rabbitmq-game.tgz", "prefix": None},
+            },
+        }
+    if all(_bounded_regular(candidate / name, maximum) for name, maximum in SCHEDULED_BACKUP_BOUNDS.items()):
+        _scheduled_manifest(candidate)
+        return {
+            "name": "scheduled-full",
+            "layers": tuple(SCHEDULED_BACKUP_BOUNDS),
+            "config": "config-and-env.tgz",
+            "tls": "config-and-env.tgz",
+            "brokers": {
+                "admin": {"archive": "rabbitmq.tgz", "prefix": "rabbitmq/admin"},
+                "game": {"archive": "rabbitmq.tgz", "prefix": "rabbitmq/game"},
+            },
+        }
+    raise ValueError("backup set does not contain a supported complete RabbitMQ layout")
 
 
 def backup_created_epoch(candidate):
     """Directory touches and fresh copies must not make old recovery data fresh."""
-    times = [(candidate / name).stat().st_mtime for name in BACKUP_LAYERS]
-    stamps = re.findall(r"(?m)^created_utc=(\d{8}T\d{6}Z)\s*$",
-                        (candidate / "manifest.txt").read_text(encoding="utf-8"))
-    if len(stamps) > 1:
-        raise ValueError("backup manifest has ambiguous creation timestamps")
+    layout = backup_layout(candidate)
+    times = [(candidate / name).stat().st_mtime for name in layout["layers"]]
+    stamps = []
+    if layout["name"] == "legacy-split":
+        stamps = re.findall(r"(?m)^created_utc=(\d{8}T\d{6}Z)\s*$",
+                            (candidate / "manifest.txt").read_text(encoding="utf-8"))
+        if len(stamps) > 1:
+            raise ValueError("backup manifest has ambiguous creation timestamps")
+    else:
+        times.append(float(_scheduled_manifest(candidate)["createdAt"]))
     named = re.match(r"^(\d{8}T\d{6}Z)(?:$|[-_])", candidate.name)
     if named:
         stamps.append(named.group(1))
@@ -118,22 +195,30 @@ def select_backup_set(workspace, requested=None):
         candidates = []
         for candidate in backup_root.iterdir():
             try:
-                if candidate.is_symlink() or not candidate.is_dir() or not (candidate / "manifest.txt").is_file():
+                if candidate.is_symlink() or not candidate.is_dir():
                     continue
                 candidates.append(candidate.resolve(strict=True))
             except OSError:
                 continue
+        maintenance = backup_root / "admin-panel" / "maintenance"
+        if maintenance.is_dir() and not maintenance.is_symlink():
+            for candidate in maintenance.iterdir():
+                try:
+                    if candidate.is_symlink() or not candidate.is_dir():
+                        continue
+                    candidates.append(candidate.resolve(strict=True))
+                except OSError:
+                    continue
     complete = []
     for candidate in candidates:
         if not _within(candidate, backup_root) or candidate.is_symlink() or not candidate.is_dir():
             continue
-        bounds = {
-            "manifest.txt": 1024 * 1024, "config.tgz": 256 * 1024**2,
-            "config-tls.tgz": 64 * 1024**2, "rabbitmq-admin.tgz": 8 * 1024**3,
-            "rabbitmq-game.tgz": 8 * 1024**3,
-        }
-        if all(_bounded_regular(candidate / name, maximum) for name, maximum in bounds.items()):
+        try:
+            _reject_symlink_components(candidate, backup_root)
+            backup_layout(candidate)
             complete.append((backup_created_epoch(candidate), candidate.name, candidate))
+        except (OSError, TypeError, ValueError):
+            continue
     if complete:
         return max(complete)[2]
     raise FileNotFoundError("no complete RabbitMQ backup set exists beneath backups/")
@@ -153,11 +238,12 @@ def _safe_name(raw):
     return pure
 
 
-def safe_extract_state(archive_path, destination):
+def safe_extract_state(archive_path, destination, member_prefix=None):
     archive_path = pathlib.Path(archive_path)
     destination = pathlib.Path(destination)
     destination.mkdir(parents=True, exist_ok=False, mode=0o700)
-    members = files = total = 0
+    prefix = pathlib.PurePosixPath(str(member_prefix).strip("/")) if member_prefix else None
+    members = files = total = archive_total = 0
     try:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in archive:
@@ -165,6 +251,19 @@ def safe_extract_state(archive_path, destination):
                 if members > MAX_ARCHIVE_MEMBERS:
                     raise ValueError("RabbitMQ archive exceeds the member bound")
                 pure = _safe_name(member.name)
+                if member.isfile():
+                    if member.size < 0 or member.size > MAX_MEMBER_BYTES or archive_total + member.size > MAX_ARCHIVE_BYTES:
+                        raise ValueError("RabbitMQ archive exceeds the byte bound")
+                    archive_total += member.size
+                elif not member.isdir():
+                    raise ValueError("RabbitMQ archive may contain only regular files and directories")
+                if prefix is not None:
+                    if pure == prefix:
+                        pure = pathlib.PurePosixPath(".")
+                    elif prefix in pure.parents:
+                        pure = pure.relative_to(prefix)
+                    else:
+                        continue
                 if pure == pathlib.PurePosixPath("."):
                     if not member.isdir():
                         raise ValueError("RabbitMQ archive root member is invalid")
@@ -174,10 +273,6 @@ def safe_extract_state(archive_path, destination):
                     target.mkdir(parents=True, exist_ok=True, mode=0o700)
                     os.chmod(target, 0o700)
                     continue
-                if not member.isfile():
-                    raise ValueError("RabbitMQ archive may contain only regular files and directories")
-                if member.size < 0 or member.size > MAX_MEMBER_BYTES or total + member.size > MAX_ARCHIVE_BYTES:
-                    raise ValueError("RabbitMQ archive exceeds the byte bound")
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 source = archive.extractfile(member)
                 if source is None:
@@ -701,6 +796,7 @@ def run_drill(workspace, *, host_workspace=None, backup_set=None, receipt_root=N
         except BlockingIOError as exc:
             raise RabbitMQRestoreDrillBusy("another RabbitMQ restore drill is running") from exc
         selected = select_backup_set(workspace, backup_set)
+        layout = backup_layout(selected)
         started_epoch = time.time(); started_mono = time.monotonic()
         identifier = datetime.datetime.fromtimestamp(started_epoch, datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(6)
         stage = receipt_root / f".stage-{identifier}"
@@ -708,7 +804,8 @@ def run_drill(workspace, *, host_workspace=None, backup_set=None, receipt_root=N
         host_stage = host_workspace / stage.relative_to(workspace)
         age = max(0.0, started_epoch - backup_created_epoch(selected))
         receipt = {"receiptSchema": 1, "id": identifier, "startedAt": _utc(started_epoch),
-                   "backupSet": selected.relative_to(workspace).as_posix(), "backupAgeSeconds": round(age, 3),
+                   "backupSet": selected.relative_to(workspace).as_posix(), "backupLayout": layout["name"],
+                   "backupAgeSeconds": round(age, 3),
                    "image": image, "liveRabbitMQTouched": False, "networkCreated": False,
                    "brokers": {}, "integrityOk": False, "policyOk": False, "ok": False}
         docker = docker or DockerClient(docker_socket)
@@ -717,17 +814,18 @@ def run_drill(workspace, *, host_workspace=None, backup_set=None, receipt_root=N
                 "staleContainersRemoved": _clean_stale_containers(docker, started_epoch),
                 "staleStagesRemoved": _clean_stale_stages(receipt_root, started_epoch),
             }
-            shutil.copyfile(selected / "config.tgz", stage / "config.tgz")
-            shutil.copyfile(selected / "config-tls.tgz", stage / "config-tls.tgz")
+            shutil.copyfile(selected / layout["config"], stage / "config.tgz")
+            shutil.copyfile(selected / layout["tls"], stage / "config-tls.tgz")
             receipt["configurationArchives"] = {
-                "configSha256": _sha256(selected / "config.tgz"),
-                "tlsSha256": _sha256(selected / "config-tls.tgz"),
+                "configSha256": _sha256(selected / layout["config"]),
+                "tlsSha256": _sha256(selected / layout["tls"]),
             }
             for name, definition in BROKERS.items():
-                archive = selected / definition["archive"]
+                source = layout["brokers"][name]
+                archive = selected / source["archive"]
                 archive_sha = _sha256(archive)
                 state = stage / f"{name}-state"
-                extraction = safe_extract_state(archive, state)
+                extraction = safe_extract_state(archive, state, source["prefix"])
                 proof = _run_one(docker, name, state, stage, host_stage, image, run_uid, run_gid,
                                  memory_bytes, cpu_count, pids_limit, readiness_seconds, sleep)
                 receipt["brokers"][name] = {**proof, "sourceSha256": archive_sha, "extraction": extraction}

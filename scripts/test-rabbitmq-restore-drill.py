@@ -119,6 +119,53 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
                 ".erlang.cookie": "fixture-cookie",
             })
 
+    def make_scheduled_backup(self, stamp=None):
+        stamp = stamp or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        candidate = self.root / "backups" / "admin-panel" / "maintenance" / f"{stamp}-browser-fixture"
+        candidate.mkdir(parents=True)
+        archive(candidate / "config-and-env.tgz", {
+            "config/rabbitmq-enabled-plugins": "[rabbitmq_management].\n",
+            "config/rabbitmq-admin.conf": "auth_backends.1 = internal\n",
+            "config/rabbitmq-game.conf": "listeners.tcp = none\nlisteners.ssl.default = 5672\n",
+            "config/tls/rabbitmq/ca.crt": "fixture-ca",
+            "config/tls/rabbitmq/server.crt": "fixture-cert",
+            "config/tls/rabbitmq/server.key": "fixture-key",
+        })
+        state = {}
+        for name, hostname in (("admin", "admin-rmq"), ("game", "game-rmq")):
+            prefix = f"rabbitmq/{name}"
+            state.update({
+                f"{prefix}/mnesia/rabbit@{hostname}/node-type.txt": "disc\n",
+                f"{prefix}/mnesia/rabbit@{hostname}/rabbit_vhost.DCD": b"fixture-vhost-state",
+                f"{prefix}/mnesia/rabbit@{hostname}/rabbit_user.DCD": b"fixture-user-state",
+                f"{prefix}/mnesia/rabbit@{hostname}.pid": "123\n",
+                f"{prefix}/.erlang.cookie": "fixture-cookie",
+            })
+        archive(candidate / "rabbitmq.tgz", state)
+        created = datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=datetime.timezone.utc).timestamp()
+        manifest = {
+            "action": "backup", "target": "all", "createdAt": created,
+            "coverage": {
+                "complete": True, "missing": [],
+                "captured": ["config", "rabbitmq"], "required": ["config", "rabbitmq"],
+            },
+            "artifacts": {
+                "config": {
+                    "path": f"/workspace/backups/{candidate.name}/config-and-env.tgz",
+                    "bytes": (candidate / "config-and-env.tgz").stat().st_size,
+                    "added": [{"archiveName": "config"}], "skipped": [],
+                },
+                "rabbitmq": {
+                    "path": f"/workspace/backups/{candidate.name}/rabbitmq.tgz",
+                    "bytes": (candidate / "rabbitmq.tgz").stat().st_size,
+                    "added": [{"archiveName": "rabbitmq"}], "skipped": [],
+                },
+            },
+        }
+        (candidate / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return candidate
+
     def run_drill(self, docker=None, **updates):
         options = {
             "host_workspace": self.root,
@@ -142,6 +189,29 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
         link.symlink_to(self.backup, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlinks"):
             drill.select_backup_set(self.root, link)
+
+    def test_selects_and_rehearses_current_scheduled_full_backup(self):
+        scheduled = self.make_scheduled_backup()
+        self.assertEqual(scheduled, drill.select_backup_set(self.root))
+        result = self.run_drill(backup_set=scheduled)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual("scheduled-full", result["backupLayout"])
+        self.assertEqual(
+            result["brokers"]["admin"]["sourceSha256"],
+            result["brokers"]["game"]["sourceSha256"],
+        )
+        self.assertEqual(
+            result["configurationArchives"]["configSha256"],
+            result["configurationArchives"]["tlsSha256"],
+        )
+
+    def test_incomplete_scheduled_manifest_is_rejected(self):
+        scheduled = self.make_scheduled_backup()
+        manifest = json.loads((scheduled / "manifest.json").read_text(encoding="utf-8"))
+        manifest["coverage"]["complete"] = False
+        (scheduled / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(FileNotFoundError, "no complete"):
+            drill.select_backup_set(self.root, scheduled)
 
     def test_receipt_root_is_confined_before_creation(self):
         outside = self.root.parent / "outside-rabbitmq-receipts"
@@ -199,6 +269,15 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
         archive(bounded, {"mnesia/rabbit@admin-rmq/a": "a", "mnesia/rabbit@admin-rmq/b": "b"})
         with mock.patch.object(drill, "MAX_ARCHIVE_MEMBERS", 1), self.assertRaisesRegex(ValueError, "member bound"):
             drill.safe_extract_state(bounded, self.root / "bounded")
+        consolidated = self.root / "consolidated.tgz"
+        archive(consolidated, {
+            "rabbitmq/admin/mnesia/rabbit@admin-rmq/node-type.txt": "disc\n",
+            "rabbitmq/game/mnesia/rabbit@game-rmq/node-type.txt": "disc\n",
+        })
+        extracted = self.root / "prefixed"
+        drill.safe_extract_state(consolidated, extracted, "rabbitmq/admin")
+        self.assertTrue((extracted / "mnesia" / "rabbit@admin-rmq" / "node-type.txt").is_file())
+        self.assertFalse((extracted / "rabbitmq").exists())
         self.assertFalse((self.root / "escape").exists())
 
     def test_required_configuration_members_must_be_unique(self):
