@@ -954,3 +954,19 @@ The chat service runs as `1000:1001`, matching its mode-0600 Compose secret
 files. Keep `cap_drop: ALL`; do not restore root capabilities merely to bypass
 secret ownership. A candidate health probe must run under this same UID/GID so
 the subsequent recreate cannot introduce a secret-permission failure.
+
+## RabbitMQ security image
+
+`admin-rmq`, `game-rmq`, and the disposable restore drill use the version-bound
+`snape/dune-rabbitmq:security-2168446` image by default. Build it with
+`scripts/build-rabbitmq-security-image.sh`; the builder rejects any base image
+other than the approved immutable vendor ID, preserves every vendor layer, and
+requires RabbitMQ 3.13.7 after applying Alpine security updates.
+
+Promotion requires a fresh zero-HIGH/zero-CRITICAL scan, an isolated broker
+startup and diagnostics check, a fresh verified backup of both broker states,
+and recorded rollback tags. Recreate the brokers one at a time with
+`--no-deps --pull never`, verify their health and authentication paths between
+steps, and prove every game-worker container ID is unchanged. A new vendor
+RabbitMQ image must be separately rebuilt and qualified; do not retag it over
+this approved image.

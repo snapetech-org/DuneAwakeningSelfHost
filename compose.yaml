@@ -184,7 +184,7 @@ services:
         ipv4_address: 172.31.240.2
 
   admin-rmq:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
+    image: ${DUNE_RABBITMQ_SECURITY_IMAGE:-snape/dune-rabbitmq:security-2168446}
     hostname: admin-rmq
     mac_address: 02:42:ac:1f:f0:03
     entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "rabbitmq"]
@@ -217,7 +217,7 @@ services:
         ipv4_address: 172.31.240.3
 
   game-rmq:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
+    image: ${DUNE_RABBITMQ_SECURITY_IMAGE:-snape/dune-rabbitmq:security-2168446}
     hostname: game-rmq
     mac_address: 02:42:ac:1f:f0:04
     entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "rabbitmq"]
@@ -891,7 +891,7 @@ services:
       DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED: ${DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED:-false}
       DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE: ${DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE:-${DUNE_RESTART_HOST_WORKSPACE:-}}
       DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET: /run/dune-docker-api/docker.sock
-      DUNE_RABBITMQ_RESTORE_DRILL_IMAGE: ${DUNE_RABBITMQ_RESTORE_DRILL_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}}
+      DUNE_RABBITMQ_RESTORE_DRILL_IMAGE: ${DUNE_RABBITMQ_RESTORE_DRILL_IMAGE:-${DUNE_RABBITMQ_SECURITY_IMAGE:-snape/dune-rabbitmq:security-2168446}}
       DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS: ${DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS:-36}
       DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS: ${DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS:-180}
       DUNE_RABBITMQ_RESTORE_DRILL_MEMORY_MIB: ${DUNE_RABBITMQ_RESTORE_DRILL_MEMORY_MIB:-1024}
