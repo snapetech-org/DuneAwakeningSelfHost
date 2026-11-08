@@ -37,6 +37,7 @@ class AdminIngressSecurityImageTest(unittest.TestCase):
             "snape/dune-db-utils:python-security-2162777}",
             chat,
         )
+        self.assertIn('user: "1000:1001"', chat)
         self.assertNotIn(qualified, chat)
 
 

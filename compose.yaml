@@ -1306,6 +1306,7 @@ services:
 
   admin-chat-commands:
     image: ${DUNE_ADMIN_CHAT_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2162777}
+    user: "1000:1001"
     restart: unless-stopped
     read_only: true
     cap_drop:

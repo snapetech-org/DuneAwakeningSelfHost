@@ -949,3 +949,8 @@ tests. Before promotion, record the old and candidate image IDs, take a fresh
 scoped backup, and verify a candidate `--healthcheck` invocation. Recreate only
 `admin-chat-commands` with `--no-deps --pull never`, then verify its health and
 prove every game-worker container ID is unchanged.
+
+The chat service runs as `1000:1001`, matching its mode-0600 Compose secret
+files. Keep `cap_drop: ALL`; do not restore root capabilities merely to bypass
+secret ownership. A candidate health probe must run under this same UID/GID so
+the subsequent recreate cannot introduce a secret-permission failure.
