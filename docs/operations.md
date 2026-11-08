@@ -926,3 +926,17 @@ candidate for zero CRITICAL findings, preserve the previous image ID for
 rollback, recreate only `admin-panel-ingress` with `--no-deps --pull never`,
 verify the private HTTP endpoint, and prove every game-worker container ID is
 unchanged.
+
+## Database utility security image
+
+`docker-api-broker`, `rmq-auth-shim`, `db-init`, and `admin-panel` use the
+qualified `snape/dune-db-utils:python-security-2173753` image by default. The
+image preserves the exact 2173753 vendor payload while updating Alpine
+packages, Python, native libraries, and packaging tools. Before promotion,
+require the exact qualified image ID, a fresh zero-HIGH/zero-CRITICAL scan, the
+native admin deployment test-only suite, a fresh scoped backup, and a recorded
+rollback image. Recreate only the three running utility services with
+`--no-deps --pull never`; `db-init` is not a long-running service. Verify the
+broker and admin health checks, RabbitMQ authentication paths, the private
+admin ingress, and unchanged game-worker container IDs. Do not substitute this
+image for `admin-chat-commands`, which uses a different vendor payload.

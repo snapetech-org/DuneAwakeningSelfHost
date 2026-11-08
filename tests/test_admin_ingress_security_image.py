@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -19,6 +20,20 @@ class AdminIngressSecurityImageTest(unittest.TestCase):
         self.assertIn("caddy validate", script)
         self.assertIn("brotli-libs-1\\.2\\.1", script)
         self.assertIn("DOCKER_BUILDKIT=0", script)
+
+    def test_only_matching_utility_services_use_qualified_image(self):
+        compose = (ROOT / "compose.yaml").read_text()
+        qualified = (
+            "${DUNE_DB_UTILS_SECURITY_IMAGE:-"
+            "snape/dune-db-utils:python-security-2173753}"
+        )
+        self.assertEqual(compose.count(qualified), 4)
+        chat = re.search(
+            r"(?ms)^  admin-chat-commands:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:)",
+            compose,
+        ).group("body")
+        self.assertIn("seabass-server-db-utils:${DUNE_IMAGE_TAG}", chat)
+        self.assertNotIn(qualified, chat)
 
 
 if __name__ == "__main__":
