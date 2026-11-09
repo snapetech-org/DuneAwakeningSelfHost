@@ -268,6 +268,12 @@ test-hotfix-update-readiness:
 	bash scripts/test-hotfix-update-readiness.sh
 	bash -n scripts/hotfix-auto-update-and-restart.sh scripts/test-hotfix-update-readiness.sh
 
+.PHONY: test-dune-health-monitor
+validate: test-dune-health-monitor
+test-dune-health-monitor:
+	python3 scripts/test-dune-health-monitor.py
+	bash -n scripts/dune-health-monitor.sh
+
 change-intelligence-status:
 	./scripts/change-intelligence.py status
 

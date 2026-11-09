@@ -13,9 +13,30 @@ mail_helper="${DUNE_MAIL_HELPER:-/usr/local/lib/snape-mail-submit.sh}"
 # shellcheck source=/dev/null
 source "$mail_helper"
 
+mkdir -p "$state_dir"
+chmod 0750 "$state_dir"
+# Serialize timer and failure-triggered checks, including state reads and mail.
+exec 9>"$state_dir/monitor.lock"
+flock -n 9 || exit 0
+previous="$(cat "$state_file" 2>/dev/null || true)"
+
 declare -a findings=()
 add_finding() {
   findings+=("$1")
+}
+
+retain_findings() {
+  local prefix="$1" line
+  while IFS= read -r line; do
+    [[ "$line" == "$prefix"* ]] && add_finding "$line"
+  done <<<"$previous"
+  return 0
+}
+
+service_running() {
+  local state
+  state="$(systemctl show "$1" --property=ActiveState --value 2>/dev/null || true)"
+  [[ "$state" == active || "$state" == activating || "$state" == reloading ]]
 }
 
 timer_next() {
@@ -58,6 +79,11 @@ for service in \
   dune-map-watchdog.service; do
   load_state="$(systemctl show "$service" --property=LoadState --value 2>/dev/null || true)"
   [[ "$load_state" == "loaded" ]] || continue
+  if [[ "$service" != dune-map-watchdog.service ]] && service_running "$service"; then
+    # A retry has not recovered until it exits successfully.
+    retain_findings "$service is failed "
+    continue
+  fi
   if systemctl is-failed --quiet "$service"; then
     result="$(systemctl show "$service" --property=Result --value 2>/dev/null || printf unknown)"
     status="$(systemctl show "$service" --property=ExecMainStatus --value 2>/dev/null || printf unknown)"
@@ -67,8 +93,8 @@ done
 
 updater_active=false
 ip_monitor_active=false
-systemctl is-active --quiet dune-hotfix-auto-update.service && updater_active=true
-systemctl is-active --quiet dune-public-ip-monitor.service && ip_monitor_active=true
+service_running dune-hotfix-auto-update.service && updater_active=true
+service_running dune-public-ip-monitor.service && ip_monitor_active=true
 
 if [[ "$updater_active" != true ]]; then
   set +e
@@ -79,6 +105,9 @@ if [[ "$updater_active" != true ]]; then
     summary="$(sed -n '/^status:/p; /^reload required:/p' <<<"$steam_check" | paste -sd '; ' -)"
     add_finding "Steam server package is stale or unverifiable${summary:+: $summary}"
   fi
+else
+  # Skipped checks are unknown, not evidence of recovery.
+  retain_findings 'Steam server package is stale or unverifiable'
 fi
 
 if [[ "$updater_active" != true && "$ip_monitor_active" != true ]]; then
@@ -105,15 +134,16 @@ if [[ "$updater_active" != true && "$ip_monitor_active" != true ]]; then
   if grep -Fq 'WARN: FLS publication health is degraded.' <<<"$farm_status"; then
     add_finding "Dune server browser publication is degraded"
   fi
+else
+  retain_findings 'Dune farm health '
+  retain_findings 'Dune required always-on '
+  retain_findings 'Dune server browser '
 fi
 
-mkdir -p "$state_dir"
-chmod 0750 "$state_dir"
 current=""
 if ((${#findings[@]})); then
   current="$(printf '%s\n' "${findings[@]}" | LC_ALL=C sort -u)"
 fi
-previous="$(cat "$state_file" 2>/dev/null || true)"
 
 if [[ "$current" == "$previous" ]]; then
   exit 0

@@ -40,6 +40,11 @@ Prometheus scraping. Those provide local visibility, but they do not deliver
 mail by themselves, and a Prometheus comparison against a missing metric does
 not fire.
 
+While an updater or public-IP check is running, skipped Steam and farm checks
+retain their last findings. A oneshot service retry also retains its failure
+until it finishes. Starting a retry is not recovery evidence. A state-directory
+lock serializes monitor invocations to prevent duplicate notifications.
+
 Install or refresh the monitor and its failure hooks with:
 
 ```bash
