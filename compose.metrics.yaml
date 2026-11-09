@@ -53,7 +53,7 @@ services:
       - /dev/disk:/dev/disk:ro
 
   postgres-exporter:
-    image: ${DUNE_METRICS_POSTGRES_EXPORTER_IMAGE:-quay.io/prometheuscommunity/postgres-exporter:v0.17.1}
+    image: ${DUNE_METRICS_POSTGRES_EXPORTER_IMAGE:-snape/dune-postgres-exporter:security-0.20.1-20261109}
     restart: unless-stopped
     environment:
       DATA_SOURCE_URI: postgres:5432/dune_sb_1_4_0_0?sslmode=disable
