@@ -135,6 +135,8 @@ services:
 
 networks:
   default:
+    driver_opts:
+      com.docker.network.bridge.name: dune-lab-br0
     ipam:
       config:
         - subnet: 172.31.241.0/24
