@@ -18,7 +18,7 @@ services:
       - no-new-privileges:true
 
   node-exporter:
-    image: ${DUNE_METRICS_NODE_EXPORTER_IMAGE:-quay.io/prometheus/node-exporter:v1.9.1}
+    image: ${DUNE_METRICS_NODE_EXPORTER_IMAGE:-snape/dune-node-exporter:security-1.12.1-20261109}
     restart: unless-stopped
     pid: host
     command:

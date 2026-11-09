@@ -949,6 +949,14 @@ label an older binary as the newer security image.
 
 ## Database utility security image
 
+The metrics node exporter uses the qualified local
+`snape/dune-node-exporter:security-1.12.1-20261109` image, with its immutable ID
+pinned in the deployed environment. This preserves upstream 1.12.1 while updating
+the Go compiler and vulnerable dependencies. Qualification passed the collector
+tests and compared host memory, 23 filesystem sizes, CPU series and 49 collector
+success results. The scan has zero HIGH/CRITICAL findings, and the live Prometheus
+target is up. The old image is retained; no other project container was recreated.
+
 `docker-api-broker`, `rmq-auth-shim`, `db-init`, and `admin-panel` use the
 qualified `snape/dune-db-utils:python-security-2173753` image by default. The
 image preserves the exact 2173753 vendor payload while updating Alpine
