@@ -31,7 +31,7 @@ services:
       - no-new-privileges:true
 
   cadvisor:
-    image: ${DUNE_METRICS_CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.52.1}
+    image: ${DUNE_METRICS_CADVISOR_IMAGE:-snape/dune-cadvisor:security-0.60.6-20261109}
     restart: unless-stopped
     privileged: false
     cap_drop:
