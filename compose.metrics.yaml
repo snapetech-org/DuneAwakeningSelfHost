@@ -1,6 +1,6 @@
 services:
   prometheus:
-    image: ${DUNE_METRICS_PROMETHEUS_IMAGE:-quay.io/prometheus/prometheus:v3.5.0}
+    image: ${DUNE_METRICS_PROMETHEUS_IMAGE:-snape/dune-prometheus:security-3.16.0-20261109}
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml

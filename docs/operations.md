@@ -947,7 +947,7 @@ All 20 other project containers retained their IDs during proxy replacement.
 The OS-overlay builder requires that qualified application version; it must not
 label an older binary as the newer security image.
 
-## Database utility security image
+## Metrics security images
 
 The metrics node exporter uses the qualified local
 `snape/dune-node-exporter:security-1.12.1-20261109` image, with its immutable ID
@@ -956,6 +956,16 @@ the Go compiler and vulnerable dependencies. Qualification passed the collector
 tests and compared host memory, 23 filesystem sizes, CPU series and 49 collector
 success results. The scan has zero HIGH/CRITICAL findings, and the live Prometheus
 target is up. The old image is retained; no other project container was recreated.
+
+Prometheus uses `snape/dune-prometheus:security-3.16.0-20261109`, with its immutable
+ID pinned in the deployed environment. Its patched Go build and verified upstream
+UI bundle passed web/API tests, zero HIGH/CRITICAL scan findings, and an isolated
+history-restore comparison. Promotion retained a fresh verified cold backup,
+preserved the other 20 project containers, and recovered all ten healthy scrape
+targets. Rollback must retain the newer database and restore the cold backup
+before starting the older binary.
+
+## Database utility security image
 
 `docker-api-broker`, `rmq-auth-shim`, `db-init`, and `admin-panel` use the
 qualified `snape/dune-db-utils:python-security-2173753` image by default. The
