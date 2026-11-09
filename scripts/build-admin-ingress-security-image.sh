@@ -2,12 +2,17 @@
 set -euo pipefail
 
 container="${DUNE_ADMIN_INGRESS_CONTAINER:-dune_server-admin-panel-ingress-1}"
-target="${DUNE_ADMIN_INGRESS_IMAGE:-snape/dune-admin-caddy:security-2.11.3}"
+target="${DUNE_ADMIN_INGRESS_IMAGE:-snape/dune-admin-caddy:security-2.11.9}"
 config="${DUNE_ADMIN_INGRESS_CONFIG:-config/admin-ingress.Caddyfile}"
 
 base_id="$(docker inspect "$container" --format '{{.Image}}')"
 [[ "$base_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo "unable to resolve immutable admin ingress base image" >&2
+  exit 1
+}
+running_version="$(docker run --rm --network none --entrypoint caddy "$base_id" version)"
+[[ "$running_version" == v2.11.9\ * ]] || {
+  echo "qualify the Caddy 2.11.9 application patch before rebuilding this OS overlay" >&2
   exit 1
 }
 base_tag="snape/dune-admin-caddy-base:${base_id#sha256:}"

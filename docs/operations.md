@@ -929,15 +929,23 @@ Rollback means restoring the old image tag and restoring state from the backups 
 ## Admin ingress security image
 
 `admin-panel-ingress` uses the locally qualified
-`snape/dune-admin-caddy:security-2.11.3` image by default. Build it from the
+`snape/dune-admin-caddy:security-2.11.9` image by default. Build it from the
 exact running image with `scripts/build-admin-ingress-security-image.sh`. The
 builder applies only Alpine package security updates, requires the Caddy
 application version and commit to remain identical, validates the production
 Caddyfile, and verifies the patched Brotli package. Promotion must scan the
-candidate for zero CRITICAL findings, preserve the previous image ID for
+candidate for zero HIGH/CRITICAL findings, preserve the previous image ID for
 rollback, recreate only `admin-panel-ingress` with `--no-deps --pull never`,
 verify the private HTTP endpoint, and prove every game-worker container ID is
 unchanged.
+
+The November 9 Caddy 2.11.9 qualification cleared 42 high findings. A separate
+canary validated the actual Caddyfile and matched production page responses,
+authentication status and security headers with an identical Host header.
+The deployed image is pinned by immutable ID in the private environment file.
+All 20 other project containers retained their IDs during proxy replacement.
+The OS-overlay builder requires that qualified application version; it must not
+label an older binary as the newer security image.
 
 ## Database utility security image
 

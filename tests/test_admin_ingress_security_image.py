@@ -10,7 +10,7 @@ class AdminIngressSecurityImageTest(unittest.TestCase):
     def test_compose_defaults_to_qualified_local_image(self):
         compose = (ROOT / "compose.yaml").read_text()
         self.assertIn(
-            "${DUNE_ADMIN_INGRESS_IMAGE:-snape/dune-admin-caddy:security-2.11.3}",
+            "${DUNE_ADMIN_INGRESS_IMAGE:-snape/dune-admin-caddy:security-2.11.9}",
             compose,
         )
 
