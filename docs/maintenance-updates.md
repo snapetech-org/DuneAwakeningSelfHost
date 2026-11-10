@@ -330,6 +330,20 @@ SteamCMD through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image
 is `cm2network/steamcmd:root`; pre-pull it before relying on unattended
 maintenance if you do not want the maintenance window to depend on a Docker Hub
 pull.
+The production helper can be pinned to a scanned local package overlay in the
+protected environment. The November 10 overlay
+`snape/dune-steamcmd:security-20261110` was built from the exact local
+`cm2network/steamcmd:root` ID
+`sha256:e6b6b3503bf0e41feafe12dc709c90151afba193e1292cac55d28a7d470b1493`
+with [the SteamCMD security Dockerfile](../scripts/docker-steamcmd-cve.Dockerfile).
+The same Trivy database found 9 CRITICAL / 150 HIGH in the base and 0 CRITICAL
+/ 51 HIGH in the overlay, with no new HIGH/CRITICAL identities; the remaining
+51 have no listed fixed Debian package. SteamCMD payload hashes were identical,
+and an isolated, credential-free online `+quit` smoke test completed. The
+private env selects this overlay via `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`; the
+upstream default remains for installations without the qualified local image.
+An upstream base refresh requires a new exact-image build, scan, and smoke
+check before changing the protected pin.
 
 When the production SteamCMD runtime is known-broken, enable the separate
 worker fallback with `DUNE_STEAM_UPDATE_WORKER_ENABLED=true` plus
