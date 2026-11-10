@@ -42,6 +42,15 @@ def official_template(map_names):
 
 
 class MapWorkerDiscoveryTest(unittest.TestCase):
+    def test_empty_game_override_resolves_nested_vendor_image(self):
+        image = "${DUNE_GAME_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}}"
+        self.assertEqual(
+            "registry.funcom.com/funcom/self-hosting/seabass-server:2180427-0-shipping",
+            sync_map_workers._expand_env(image, {
+                "DUNE_GAME_IMAGE": "", "DUNE_IMAGE_TAG": "2180427-0-shipping",
+            }),
+        )
+
     def test_port_ranges_parse_and_reject_invalid_bounds(self):
         self.assertEqual(
             (7777, 7871),
