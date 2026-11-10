@@ -83,7 +83,11 @@ def control_health():
             "busy": RESTART_LOCK.locked() or CONTROL_ACTIVE["jobId"] is not None,
         }
     except (OSError, ValueError, KeyError, host_service_control.Blocked):
-        return {"ok": False, "protocol": host_service_control.PROTOCOL, "serviceControlReady": False, "statefulControlReady": False}
+        # Configuration drift blocks operations, but an operator still needs
+        # the independent idle signal to reapprove that configuration safely.
+        return {"ok": False, "protocol": host_service_control.PROTOCOL,
+                "serviceControlReady": False, "statefulControlReady": False,
+                "busy": RESTART_LOCK.locked() or CONTROL_ACTIVE["jobId"] is not None}
 
 
 def save_control_job(job):

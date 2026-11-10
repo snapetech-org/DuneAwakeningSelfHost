@@ -30,6 +30,25 @@ def request(**overrides):
 class RestartApiValidationTests(unittest.TestCase):
     maps = {"survival", "testing-hephaestus", "heighliner-dungeon"}
 
+    def test_unapproved_configuration_reports_idle_without_qualifying_control(self):
+        with mock.patch.object(API.host_service_control, "Admission") as admission:
+            admission.return_value.require_policy.side_effect = API.host_service_control.Blocked("stale approval")
+            with mock.patch.object(API, "RESTART_LOCK") as lock:
+                lock.locked.return_value = False
+                result = API.control_health()
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["serviceControlReady"])
+        self.assertIs(result["busy"], False)
+
+    def test_unapproved_configuration_still_reports_busy_recovery(self):
+        with mock.patch.object(API.host_service_control, "Admission") as admission:
+            admission.return_value.require_policy.side_effect = API.host_service_control.Blocked("stale approval")
+            with mock.patch.object(API, "RESTART_LOCK") as lock:
+                lock.locked.return_value = True
+                result = API.control_health()
+        self.assertFalse(result["ok"])
+        self.assertIs(result["busy"], True)
+
     def test_accepts_one_configured_map_start(self):
         result = API.validate_request(request(), self.maps)
         self.assertEqual(result["target"], "testing-hephaestus")
