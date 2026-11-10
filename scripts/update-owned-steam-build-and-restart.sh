@@ -331,6 +331,10 @@ fi
 
 printf '\nensuring active database branch for current image\n'
 ./scripts/apply-official-db-patches.sh "$env_file"
+for key in DUNE_GAME_DB_NAME DUNE_DATABASE DUNE_DB_NAME DUNE_PUBLIC_STATUS_DB_NAME; do
+  value="$(env_value "$key")"
+  [[ -z "$value" ]] || export "$key=$value"
+done
 
 # The configured list is only the base set. compose-files.sh appends generated
 # map workers and host-specific overlays, even when systemd exported that list.

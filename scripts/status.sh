@@ -4,7 +4,7 @@ set -euo pipefail
 env_file="${1:-.env}"
 PUBLIC_SUMMARY=false
 if [[ "${1:-}" == "--public-summary" ]]; then
-  env_file=""
+  env_file="${DUNE_ENV_FILE:-.env}"
   PUBLIC_SUMMARY=true
 elif [[ "${2:-}" == "--public-summary" ]]; then
   PUBLIC_SUMMARY=true
@@ -47,7 +47,8 @@ admin_rmq_container=""
 if [[ "$PUBLIC_SUMMARY" == true ]]; then
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(env_value COMPOSE_PROJECT_NAME)}"
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-dune_server}"
-  db="${DUNE_PUBLIC_STATUS_DB_NAME:-$(env_value DUNE_PUBLIC_STATUS_DB_NAME)}"
+  db="$(env_value DUNE_PUBLIC_STATUS_DB_NAME)"
+  db="${db:-${DUNE_PUBLIC_STATUS_DB_NAME:-}}"
   db="${db:-dune_sb_1_4_0_0}"
   core_partition_ids="${DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS:-$(env_value DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS)}"
   core_partition_ids="${core_partition_ids:-1,2}"

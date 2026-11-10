@@ -158,9 +158,13 @@ clone_database_if_missing "$source_db" "$db_name"
 case "${DUNE_WRITE_ACTIVE_DB_ENV:-$(get_env DUNE_WRITE_ACTIVE_DB_ENV)}" in
   0|false|no|off) ;;
   *)
+    public_status_db="$(get_env DUNE_PUBLIC_STATUS_DB_NAME)"
     set_env_value DUNE_GAME_DB_NAME "$db_name"
     set_env_value DUNE_DATABASE "$db_name"
     set_env_value DUNE_DB_NAME "$db_name"
+    if [[ "$public_status_db" == "$source_db" && "$db_name" != "$source_db" ]]; then
+      set_env_value DUNE_PUBLIC_STATUS_DB_NAME "$db_name"
+    fi
     ;;
 esac
 
