@@ -1,4 +1,4 @@
-# Runner policy: compatible GitHub-hosted Linux x64; private JIT for special requirements.
+# ng-runner-policy: private-jit-only-v1
 name: Semgrep Community Edition
 
 on:
@@ -19,7 +19,7 @@ jobs:
   semgrep:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Semgrep CE (community rules)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-duneawakeningselfhost","ng-main-run-{0}","gha-{0}-semgrep"]}}', github.run_id)) }}
     timeout-minutes: 30
     steps:
       - name: Checkout
