@@ -1,5 +1,39 @@
 # Qualified game runtime images
 
+## Control-plane package overlays
+
+The director and text router can use locally built package overlays for a
+specific vendor build. Build each overlay from the exact vendor image selected
+by `DUNE_IMAGE_TAG`, then scan and test it before changing the private `.env`.
+Set all three fields per service; the image ID is the full `docker image
+inspect --format '{{.Id}}'` value:
+
+```dotenv
+DUNE_DIRECTOR_IMAGE=snape/dune-bg-director:security-<vendor-build>
+DUNE_DIRECTOR_IMAGE_ID=sha256:<64 lowercase hexadecimal characters>
+DUNE_DIRECTOR_VENDOR_TAG=<same value as DUNE_IMAGE_TAG>
+DUNE_TEXT_ROUTER_IMAGE=snape/dune-text-router:security-<vendor-build>
+DUNE_TEXT_ROUTER_IMAGE_ID=sha256:<64 lowercase hexadecimal characters>
+DUNE_TEXT_ROUTER_VENDOR_TAG=<same value as DUNE_IMAGE_TAG>
+```
+
+The running-image verifier rejects an incomplete pin, a changed loaded image,
+an unapproved local image, or an overlay from an older vendor build. Keep the
+vendor images locally for recovery. The standby image sync includes configured
+overlays. A new vendor build requires new overlays and scans; do not carry an
+old override forward.
+
+Deploy the committed Compose and verifier changes through the assured
+control-plane source workflow. Then update the private `.env` and recreate
+only `director` and `text-router` through the guarded host maintenance path.
+Preserve the previous image IDs and configuration for rollback, run the native
+gateway neighbor seed after the control-plane restart, and verify FLS, farm
+registration, and the exact loaded image IDs. Do not recreate game map workers.
+
+The November 2026 package overlays update musl, zlib, and related Alpine
+packages. They do not replace the vendor-bundled .NET runtime; its remaining
+scanner findings require a qualified vendor republish.
+
 The default game image remains the vendor image selected by `DUNE_IMAGE_TAG`.
 An operator can opt into a locally qualified runtime with `DUNE_GAME_IMAGE`
 and `DUNE_RUNTIME_SECURITY_APPROVAL_FILE`. This changes only game workers;

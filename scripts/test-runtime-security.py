@@ -96,7 +96,8 @@ class RuntimeSecurityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             security.configuration(self.root, self.settings)
 
-    def verifier(self, override=True, actual_id=None):
+    def verifier(self, override=True, actual_id=None, control=False, control_pin=True,
+                 control_vendor_tag=None):
         scripts = self.root / "scripts"
         scripts.mkdir(exist_ok=True)
         (self.root / "admin").mkdir(exist_ok=True)
@@ -108,15 +109,21 @@ class RuntimeSecurityTests(unittest.TestCase):
         settings = dict(self.settings)
         if not override:
             settings.pop("DUNE_GAME_IMAGE")
+        control_image = "snape/dune-bg-director:cve-candidate-20261110"
+        if control:
+            settings["DUNE_DIRECTOR_IMAGE"] = control_image
+            if control_pin:
+                settings["DUNE_DIRECTOR_IMAGE_ID"] = self.approval["imageId"]
+                settings["DUNE_DIRECTOR_VENDOR_TAG"] = control_vendor_tag or settings["DUNE_IMAGE_TAG"]
         env_file = self.root / ".env"
         env_file.write_text("".join(f"{k}={v}\n" for k, v in settings.items()))
         docker = self.root / "docker"
         docker.write_text("#!/usr/bin/env python3\nimport sys\na=sys.argv[1:]\n"
                           + "if a[:2] == ['image','inspect']:\n"
-                          + f" print({self.approval['imageId']!r} if a[2].startswith('snape/') else {self.approval['vendorImageId']!r})\n"
-                          + "elif a[0] == 'ps': print('fixture\tmap-fixture')\n"
+                          + f" print({self.approval['imageId']!r} if (a[2] if a[2] != '--format' else a[-1]).startswith('snape/') else {self.approval['vendorImageId']!r})\n"
+                          + f"elif a[0] == 'ps': print('fixture\\t{'director' if control else 'map-fixture'}')\n"
                           + "elif a[0] == 'inspect':\n"
-                          + f" print({self.settings['DUNE_GAME_IMAGE']!r} if a[2] == '{{{{.Config.Image}}}}' else {(actual_id or self.approval['imageId'])!r})\n"
+                          + f" print({(control_image if control else self.settings['DUNE_GAME_IMAGE'])!r} if a[2] == '{{{{.Config.Image}}}}' else {(actual_id or self.approval['imageId'])!r})\n"
                           + "else: sys.exit(3)\n")
         docker.chmod(0o700)
         env = {k: v for k, v in os.environ.items() if k not in security.KEYS}
@@ -137,6 +144,18 @@ class RuntimeSecurityTests(unittest.TestCase):
         result = self.verifier(override=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unapproved runtime security image", result.stderr)
+
+    def test_control_plane_overlay_requires_exact_pin_and_vendor_build(self):
+        self.assertEqual(self.verifier(control=True).returncode, 0)
+        for options, expected in [
+            ({"control": True, "control_pin": False}, "invalid director security image pin"),
+            ({"control": True, "control_vendor_tag": "older-build"}, "invalid director security image pin"),
+            ({"control": True, "actual_id": "sha256:" + "c" * 64}, "control-plane security image mismatch"),
+        ]:
+            with self.subTest(options=options):
+                result = self.verifier(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
 
     def test_approval_path_must_be_confined_and_regular(self):
         (self.root / "alias.json").symlink_to(self.root / "approval.json")

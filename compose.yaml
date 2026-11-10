@@ -301,7 +301,7 @@ services:
         ipv4_address: 172.31.240.42
 
   director:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}
+    image: ${DUNE_DIRECTOR_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}}
     entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "director"]
     # Director currently terminates on malformed login envelopes instead of
     # rejecting them. Keep the control plane self-healing while the upstream
@@ -353,7 +353,7 @@ services:
         ipv4_address: 172.31.240.5
 
   text-router:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${DUNE_IMAGE_TAG}
+    image: ${DUNE_TEXT_ROUTER_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${DUNE_IMAGE_TAG}}
     mac_address: 02:42:ac:1f:f0:06
     entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "text-router"]
     dns:

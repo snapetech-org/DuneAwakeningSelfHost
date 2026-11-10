@@ -75,11 +75,64 @@ if [[ -n "$game_override" ]]; then
   runtime_image_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("imageId", ""))' "$runtime_check")"
 fi
 
+# Control-plane overlays are qualified for one vendor build and one immutable
+# local image ID. A later Steam build must not inherit an old overlay.
+declare -A control_image control_id
+for service in director text-router; do
+  if [[ "$service" == director ]]; then
+    prefix=DUNE_DIRECTOR
+  else
+    prefix=DUNE_TEXT_ROUTER
+  fi
+  image_key="${prefix}_IMAGE"
+  id_key="${prefix}_IMAGE_ID"
+  vendor_key="${prefix}_VENDOR_TAG"
+  override="${!image_key:-$(env_value "$image_key")}"
+  pinned_id="${!id_key:-$(env_value "$id_key")}"
+  vendor_tag="${!vendor_key:-$(env_value "$vendor_key")}"
+  if [[ -z "$override$pinned_id$vendor_tag" ]]; then
+    continue
+  fi
+  if [[ -z "$override" || ! "$pinned_id" =~ ^sha256:[0-9a-f]{64}$ || "$vendor_tag" != "$expected_tag" ]]; then
+    printf 'invalid %s security image pin for vendor tag %s\n' "$service" "$expected_tag" >&2
+    exit 2
+  fi
+  if [[ "$service" == director && "$override" != snape/dune-bg-director:* ]] \
+    || [[ "$service" == text-router && "$override" != snape/dune-text-router:* ]]; then
+    printf 'unapproved %s security image reference\n' "$service" >&2
+    exit 2
+  fi
+  loaded_id="$(docker image inspect --format '{{.Id}}' "$override" 2>/dev/null || true)"
+  if [[ "$loaded_id" != "$pinned_id" ]]; then
+    printf '%s security image is missing or differs from its pinned ID\n' "$service" >&2
+    exit 1
+  fi
+  control_image["$service"]="$override"
+  control_id["$service"]="$pinned_id"
+done
+
 checked=0
 mismatches=0
 while IFS=$'\t' read -r container_id service; do
   [[ -n "$container_id" ]] || continue
   image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+  if [[ "$service" == director || "$service" == text-router ]]; then
+    if [[ -n "${control_image[$service]:-}" ]]; then
+      checked=$((checked + 1))
+      actual_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+      if [[ "$image" != "${control_image[$service]}" || "$actual_id" != "${control_id[$service]}" ]]; then
+        printf 'control-plane security image mismatch: service=%s\n' "$service" >&2
+        mismatches=$((mismatches + 1))
+      fi
+      continue
+    fi
+    if [[ "$image" == snape/dune-* ]]; then
+      printf 'unapproved control-plane security image: service=%s\n' "$service" >&2
+      checked=$((checked + 1))
+      mismatches=$((mismatches + 1))
+      continue
+    fi
+  fi
   if [[ -n "$runtime_image_id" && "$image" == "$game_override" ]]; then
     checked=$((checked + 1))
     actual_id="$(docker inspect --format '{{.Image}}' "$container_id")"

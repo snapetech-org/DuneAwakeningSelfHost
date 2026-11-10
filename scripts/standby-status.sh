@@ -35,8 +35,10 @@ fi
 compose=(docker compose --env-file "$env_file" -f compose.yaml -f compose.replica.yaml)
 game_image="registry.funcom.com/funcom/self-hosting/seabass-server:${image_tag}"
 rmq_image="registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${image_tag}"
-director_image="registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${image_tag}"
-text_router_image="registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${image_tag}"
+director_image="${DUNE_DIRECTOR_IMAGE:-$(read_env DUNE_DIRECTOR_IMAGE)}"
+director_image="${director_image:-registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${image_tag}}"
+text_router_image="${DUNE_TEXT_ROUTER_IMAGE:-$(read_env DUNE_TEXT_ROUTER_IMAGE)}"
+text_router_image="${text_router_image:-registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${image_tag}}"
 db_utils_image="registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${image_tag}"
 postgres_image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
 
