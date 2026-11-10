@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/check-steam-update.sh [env-file] [--write-env]
+Usage: ./scripts/check-steam-update.sh [env-file] [--write-env] [--package-only]
 
 Compare DUNE_IMAGE_TAG with the image tags shipped in the local Steam-installed
 Dune: Awakening Self-Hosted Server package. By default this is read-only.
@@ -11,11 +11,14 @@ Dune: Awakening Self-Hosted Server package. By default this is read-only.
 Options:
   --write-env   Update DUNE_IMAGE_TAG in the env file when exactly one package
                 server tag is found.
+  --package-only  Inspect the installed Steam package before qualifying a new
+                  runtime image. The final check still requires approval.
 EOF
 }
 
 env_file=".env"
 write_env=false
+package_only=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -25,6 +28,9 @@ for arg in "$@"; do
       ;;
     --write-env)
       write_env=true
+      ;;
+    --package-only)
+      package_only=true
       ;;
     *)
       env_file="$arg"
@@ -197,7 +203,7 @@ if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" !=
   exit 2
 fi
 
-if [[ -n "$(env_or_file DUNE_GAME_IMAGE)" ]]; then
+if [[ "$package_only" != true && -n "$(env_or_file DUNE_GAME_IMAGE)" ]]; then
   security_tag="$package_tag"
   current_build="${current_tag%%-*}"; package_build="${package_tag%%-*}"
   if [[ "$current_build" =~ ^[0-9]+$ && "$package_build" =~ ^[0-9]+$ && "$package_build" -lt "$current_build" ]]; then

@@ -49,8 +49,13 @@ if [[ "$require_readiness" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]] \
   "$script_dir/update-steam-tool.sh" "$env_file"
   check_file="$(mktemp)"
   trap 'rm -f "$check_file"' EXIT
+  package_check_args=()
+  auto_qualify="$(awk -F= '$1 == "DUNE_AUTO_QUALIFY_GAME_IMAGE" {print $2; exit}' "$env_file")"
+  if [[ "${DUNE_AUTO_QUALIFY_GAME_IMAGE:-${auto_qualify:-false}}" =~ ^(1|true|yes|on)$ ]]; then
+    package_check_args+=(--package-only)
+  fi
   set +e
-  "$script_dir/check-steam-update.sh" "$env_file" 2>&1 | tee "$check_file"
+  "$script_dir/check-steam-update.sh" "$env_file" "${package_check_args[@]}" 2>&1 | tee "$check_file"
   check_rc="${PIPESTATUS[0]}"
   set -e
   case "$check_rc" in

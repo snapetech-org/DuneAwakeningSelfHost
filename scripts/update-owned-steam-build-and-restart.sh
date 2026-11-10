@@ -272,8 +272,14 @@ cleanup() {
 trap cleanup EXIT
 
 printf '\nchecking Steam package tag against .env\n'
+auto_qualify="$(env_value DUNE_AUTO_QUALIFY_GAME_IMAGE)"
+auto_qualify="${DUNE_AUTO_QUALIFY_GAME_IMAGE:-${auto_qualify:-false}}"
+package_check_args=()
+if [[ "$auto_qualify" =~ ^(1|true|yes|on)$ ]]; then
+  package_check_args+=(--package-only)
+fi
 set +e
-./scripts/check-steam-update.sh "$env_file" 2>&1 | tee "$check_file"
+./scripts/check-steam-update.sh "$env_file" "${package_check_args[@]}" 2>&1 | tee "$check_file"
 check_rc="${PIPESTATUS[0]}"
 set -e
 
@@ -287,7 +293,7 @@ case "$check_rc" in
       printf '\nloading Funcom Docker images from Steam package\n'
       ./scripts/load-images.sh "$env_file"
       printf '\nwriting DUNE_IMAGE_TAG to %s\n' "$env_file"
-      ./scripts/check-steam-update.sh "$env_file" --write-env
+      ./scripts/check-steam-update.sh "$env_file" --write-env "${package_check_args[@]}"
       # The systemd service loads .env into this process at start. Its old
       # exported tag would otherwise override the value just written to disk
       # in every later check and in Compose interpolation.
@@ -304,6 +310,56 @@ case "$check_rc" in
     die "Steam package is still incomplete or unreadable; not loading images or restarting"
     ;;
 esac
+
+if [[ "$auto_qualify" =~ ^(1|true|yes|on)$ ]]; then
+  [[ "$(hostname)" == "kspls0" ]] || die "automatic game image qualification requires kspls0"
+  game_tag="$(env_value DUNE_IMAGE_TAG)"
+  vendor_image="registry.funcom.com/funcom/self-hosting/seabass-server:$game_tag"
+  vendor_id="$(docker image inspect "$vendor_image" --format '{{.Id}}')"
+  [[ "$vendor_id" =~ ^sha256:[0-9a-f]{64}$ ]] || die "loaded vendor game image has no immutable ID"
+  qualification_state="backups/admin-panel/runtime-security-auto"
+  mkdir -p "$qualification_state"
+  chmod 700 "$qualification_state"
+  failure_marker="$qualification_state/failure-${game_tag}-${vendor_id:7:12}.stamp"
+  retry_seconds="$(env_value DUNE_AUTO_QUALIFY_RETRY_SECONDS)"
+  retry_seconds="${retry_seconds:-21600}"
+  [[ "$retry_seconds" =~ ^[0-9]+$ ]] || die "DUNE_AUTO_QUALIFY_RETRY_SECONDS must be an integer"
+  previous_game_image="$(env_value DUNE_GAME_IMAGE)"
+  attempt_qualification=true
+  if [[ -f "$failure_marker" && "$updated" != true ]]; then
+    last_attempt="$(stat -c %Y "$failure_marker")"
+    if (( $(date +%s) - last_attempt < retry_seconds )); then
+      attempt_qualification=false
+      printf 'qualified game image retry deferred for this vendor build\n'
+    fi
+  fi
+  if [[ "$attempt_qualification" == true ]]; then
+    printf '\nbuilding and qualifying local game image for %s\n' "$game_tag"
+    if qualification_json="$(python3 ./scripts/qualify-game-runtime.py "$env_file")"; then
+      read -r qualified_image approval_file < <(
+        python3 -c 'import json,sys; value=json.loads(sys.argv[1]); print(value["image"], value["approvalFile"])' "$qualification_json"
+      )
+      [[ "$qualified_image" == snape/dune-server:qualified-* && "$approval_file" == backups/admin-panel/runtime-security-auto/*/approval.json ]] \
+        || die "qualification returned an invalid image or approval path"
+      python3 ./scripts/update-env-file.py "$env_file" --allow-protected-link --quiet \
+        --set DUNE_GAME_IMAGE "$qualified_image" \
+        --set DUNE_RUNTIME_SECURITY_APPROVAL_FILE "$approval_file"
+      export DUNE_GAME_IMAGE="$qualified_image" DUNE_RUNTIME_SECURITY_APPROVAL_FILE="$approval_file"
+      python3 ./scripts/runtime-security.py "$env_file" --expected-tag "$game_tag" >/dev/null
+      rm -f "$failure_marker"
+      [[ "$previous_game_image" == "$qualified_image" ]] || updated=true
+      printf 'qualified game image approved: %s\n' "$qualified_image"
+    else
+      printf 'warning: local game image qualification failed; using official vendor game image\n' >&2
+      : >"$failure_marker"
+      chmod 600 "$failure_marker"
+      python3 ./scripts/update-env-file.py "$env_file" --allow-protected-link --quiet \
+        --set DUNE_GAME_IMAGE "" --set DUNE_RUNTIME_SECURITY_APPROVAL_FILE ""
+      export DUNE_GAME_IMAGE="" DUNE_RUNTIME_SECURITY_APPROVAL_FILE=""
+      [[ -z "$previous_game_image" ]] || updated=true
+    fi
+  fi
+fi
 
 printf '\nverifying final Steam/package state\n'
 ./scripts/check-steam-update.sh "$env_file"

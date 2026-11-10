@@ -69,13 +69,18 @@ def configuration(workspace, settings, expected_tag=None):
     if not resolved.is_file() or resolved.stat().st_size > 128 * 1024:
         raise ValueError("runtime security approval exceeds its file bound")
     approval = json.loads(resolved.read_text(encoding="utf-8"))
-    if not isinstance(approval, dict) or type(approval.get("schemaVersion")) is not int or approval["schemaVersion"] != 1:
+    if not isinstance(approval, dict) or type(approval.get("schemaVersion")) is not int or approval["schemaVersion"] not in (1, 2):
         raise ValueError("runtime security approval schema is invalid")
     if approval.get("vendorTag") != tag or approval.get("image") != image:
         raise ValueError("runtime security approval does not cover the target game version/image")
     for key in ("imageId", "vendorImageId"):
         if not isinstance(approval.get(key), str) or not IMAGE_ID.fullmatch(approval[key]):
             raise ValueError("runtime security approval requires immutable image IDs")
+    scan_image_id = approval["imageId"]
+    if approval["schemaVersion"] == 2:
+        scan_image_id = approval.get("scanImageId")
+        if not isinstance(scan_image_id, str) or not IMAGE_ID.fullmatch(scan_image_id):
+            raise ValueError("runtime security approval requires the scanner input image config ID")
     scan = approval.get("scan") or {}
     if not isinstance(scan, dict) or any(type(scan.get(key)) is not int or scan[key] != 0 for key in ("critical", "high", "errors")):
         raise ValueError("runtime security approval requires a complete clean image scan")
@@ -86,6 +91,7 @@ def configuration(workspace, settings, expected_tag=None):
                 "only_python_packaging_files_changed", "native_binary_linker_passed",
                 "image_runtime_configuration_unchanged")
     if (qualification.get("candidate_image") != approval["imageId"]
+            or (approval["schemaVersion"] == 2 and qualification.get("scan_image_config_id") != scan_image_id)
             or any(qualification.get(key) is not True for key in required)
             or not any(key.startswith("embedded_python_") and key.endswith("_compatibility_passed")
                        and value is True for key, value in qualification.items())):
@@ -93,7 +99,7 @@ def configuration(workspace, settings, expected_tag=None):
     report = evidence_file(root, approval.get("scanReport"))
     metadata = report.get("Metadata") or {}
     results = report.get("Results")
-    if (not isinstance(metadata, dict) or metadata.get("ImageID") != approval["imageId"]
+    if (not isinstance(metadata, dict) or metadata.get("ImageID") != scan_image_id
             or not metadata.get("OS") or report.get("Errors") or not isinstance(results, list)
             or not results or any(not isinstance(result, dict) for result in results)):
         raise ValueError("runtime security scan is incomplete or covers another image")

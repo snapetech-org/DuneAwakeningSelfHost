@@ -52,6 +52,20 @@ class RuntimeSecurityTests(unittest.TestCase):
         result = security.configuration(self.root, self.settings)
         security.verify_loaded_images(result, self.approval["imageId"], self.approval["vendorImageId"])
 
+    def test_saved_image_scan_config_is_bound_to_candidate(self):
+        self.approval["schemaVersion"] = 2
+        self.approval["scanImageId"] = "sha256:" + "c" * 64
+        self.qualification["scan_image_config_id"] = self.approval["scanImageId"]
+        self.report["Metadata"]["ImageID"] = self.approval["scanImageId"]
+        self.bind_evidence()
+        self.write()
+        self.assertEqual(security.configuration(self.root, self.settings)["imageId"], self.approval["imageId"])
+        self.qualification["scan_image_config_id"] = "sha256:" + "d" * 64
+        self.bind_evidence()
+        self.write()
+        with self.assertRaisesRegex(ValueError, "qualification"):
+            security.configuration(self.root, self.settings)
+
     def test_future_game_version_is_rejected_before_update(self):
         with self.assertRaises(ValueError):
             security.configuration(self.root, self.settings, "2180000-0-shipping")

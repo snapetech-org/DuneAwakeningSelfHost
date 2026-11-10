@@ -39,6 +39,38 @@ An operator can opt into a locally qualified runtime with `DUNE_GAME_IMAGE`
 and `DUNE_RUNTIME_SECURITY_APPROVAL_FILE`. This changes only game workers;
 RabbitMQ and the remaining control-plane images retain their own references.
 
+## Automatic local qualification
+
+Set `DUNE_AUTO_QUALIFY_GAME_IMAGE=true` in the protected production `.env` to
+qualify a fresh runtime for every loaded vendor image. The hotfix updater first
+checks the Steam package without applying the old image pin, loads the vendor
+image, then runs `scripts/qualify-game-runtime.py` on `kspls0`. The builder uses
+the exact vendor image ID as its base, upgrades a hash-pinned wheel in the
+embedded Python site-packages, and removes build/development packages. It
+compares the entire game payload against the vendor image, allows changes only
+to embedded Python packaging, checks native linking and embedded Python, then
+scans a saved image tar with pinned Trivy. It writes private evidence and an
+approval only after all checks pass. The updater verifies that approval before
+changing the image override and entering the guarded backup/restart path.
+
+The output is version-bound under
+`backups/admin-panel/runtime-security-auto/auto-<vendor-tag>-<vendor-id>/`.
+The builder is idempotent for an unchanged approved image. If qualification
+fails, the updater clears the custom override and uses the official vendor
+image; it records a per-image failure stamp and retries after
+`DUNE_AUTO_QUALIFY_RETRY_SECONDS` (default 21600). The saved report and approval
+remain private. Run the builder directly to stage and inspect an approval
+without changing the live environment:
+
+```sh
+python3 scripts/qualify-game-runtime.py .env
+```
+
+The generated approval uses schema 2. Its `imageId` is Docker's loaded image
+ID; `scanImageId` is the image-config digest inside the exact tar passed to
+Trivy. The verifier binds both identities to the hash-pinned evidence. Schema 1
+manual approvals remain accepted.
+
 Use a named local image in the reserved `snape/dune-server:` namespace. Never
 retag the vendor image. Keep the approval and its evidence inside the workspace,
 for example under the private `backups/admin-panel/runtime-security/` directory.
