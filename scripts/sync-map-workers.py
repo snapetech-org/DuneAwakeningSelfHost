@@ -39,7 +39,7 @@ DB_MAP_RE = re.compile(r"^[A-Za-z0-9_]+$")
 SERVICE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 PARTITION_RE = re.compile(r"^-PartitionIndex=(\d+)$")
 PORT_RE = re.compile(r"^-(Port|IGWPort)=(\d+)$")
-ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^${}]*))?\}")
 DEFAULT_GAME_PORT_RANGE = (7777, 7871)
 DEFAULT_IGW_PORT_RANGE = (7888, 7982)
 DEFAULT_GAME_PORT_MIN = 7000
@@ -431,7 +431,14 @@ def _expand_env(value: str, env_values: dict[str, str]) -> str:
             return os.environ[key]
         return fallback or ""
 
-    return ENV_RE.sub(replace, value)
+    # Compose allows a fallback to contain another variable, as in the game
+    # image reference when DUNE_GAME_IMAGE is empty. Resolve the inner value
+    # first so discovery scans the same image Compose will start.
+    while True:
+        expanded = ENV_RE.sub(replace, value)
+        if expanded == value:
+            return value
+        value = expanded
 
 
 def _image_for_scan(raw_image: str, env_values: dict[str, str], runtime: str) -> tuple[str, str]:
