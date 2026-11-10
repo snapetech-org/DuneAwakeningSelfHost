@@ -32,6 +32,10 @@ the protected `.env`; keep it linked to the private Compose dotenv.
 The hotfix service is bounded to 90 minutes per run. Its timer waits 15 minutes
 after the service exits before polling again, so a slow or failed update does
 not cause overlapping work or an immediate retry when a long run finishes.
+After a farm restart, the updater waits up to seven minutes for Director and
+Gateway FLS publication to pass; `DUNE_FLS_PUBLICATION_WAIT_SECONDS` can change
+that bound. This covers the short period when Gateway has declared the farm but
+Director's first population update still sees an inactive battlegroup.
 
 ## Independent Health Alerts
 

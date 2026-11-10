@@ -451,7 +451,17 @@ printf '\nchecking live farm status\n'
 ./scripts/status.sh "$env_file"
 
 printf '\nchecking FLS publication health\n'
-./scripts/fls-publication-health.py "$env_file" --compose-files "$COMPOSE_FILES"
+fls_wait_seconds="$(env_value DUNE_FLS_PUBLICATION_WAIT_SECONDS)"
+fls_wait_seconds="${fls_wait_seconds:-420}"
+[[ "$fls_wait_seconds" =~ ^[0-9]+$ ]] || die "DUNE_FLS_PUBLICATION_WAIT_SECONDS must be an integer"
+fls_deadline=$((SECONDS + fls_wait_seconds))
+while ! ./scripts/fls-publication-health.py "$env_file" --compose-files "$COMPOSE_FILES"; do
+  if (( SECONDS >= fls_deadline )); then
+    die "FLS publication did not recover within ${fls_wait_seconds}s"
+  fi
+  printf 'FLS publication is settling after restart; checking again in 15s\n'
+  sleep 15
+done
 
 printf '\nchecking logoff timer runtime patch state\n'
 if ! ./scripts/patch-logoff-timers-runtime.sh --local --dry-run; then
