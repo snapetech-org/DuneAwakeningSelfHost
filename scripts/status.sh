@@ -45,9 +45,12 @@ postgres_container=""
 game_rmq_container=""
 admin_rmq_container=""
 if [[ "$PUBLIC_SUMMARY" == true ]]; then
+  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(env_value COMPOSE_PROJECT_NAME)}"
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-dune_server}"
-  db="${DUNE_PUBLIC_STATUS_DB_NAME:-dune_sb_1_4_0_0}"
-  core_partition_ids="${DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS:-1,2}"
+  db="${DUNE_PUBLIC_STATUS_DB_NAME:-$(env_value DUNE_PUBLIC_STATUS_DB_NAME)}"
+  db="${db:-dune_sb_1_4_0_0}"
+  core_partition_ids="${DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS:-$(env_value DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS)}"
+  core_partition_ids="${core_partition_ids:-1,2}"
   container_for_service() {
     "$container_runtime" ps -q \
       --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
