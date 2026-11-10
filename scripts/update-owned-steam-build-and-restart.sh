@@ -288,6 +288,10 @@ case "$check_rc" in
       ./scripts/load-images.sh "$env_file"
       printf '\nwriting DUNE_IMAGE_TAG to %s\n' "$env_file"
       ./scripts/check-steam-update.sh "$env_file" --write-env
+      # The systemd service loads .env into this process at start. Its old
+      # exported tag would otherwise override the value just written to disk
+      # in every later check and in Compose interpolation.
+      export DUNE_IMAGE_TAG="$(env_value DUNE_IMAGE_TAG)"
     elif grep -q 'status: same tag but Steam build changed' "$check_file"; then
       printf '\nreloading Funcom Docker images for changed Steam build under existing tag\n'
       ./scripts/load-images.sh "$env_file"
