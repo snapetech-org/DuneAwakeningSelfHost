@@ -17,6 +17,13 @@ operator certifies and applies the candidate in Infrastructure. The legacy
 fully automatic behavior requires the explicit
 `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=true` opt-out.
 
+Unattended vendor updates require `DUNE_GAME_IMAGE` to be empty. A qualified
+`snape/dune-server` image is approved for one vendor tag and must be rebuilt,
+rescanned, and reapproved for each new tag before an update can proceed. Keep
+that override only when this manual qualification workflow is intended. The
+hotfix timer reads the protected `.env`; keep it linked to the private Compose
+dotenv rather than maintaining a second, divergent copy in the workspace.
+
 The hotfix service is bounded to 90 minutes per run. Its timer waits 15 minutes
 after the service exits before polling again, so a slow or failed update does
 not cause overlapping work or an immediate retry when a long run finishes.
