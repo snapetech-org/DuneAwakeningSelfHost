@@ -332,7 +332,9 @@ fi
 printf '\nensuring active database branch for current image\n'
 ./scripts/apply-official-db-patches.sh "$env_file"
 
-COMPOSE_FILES="${COMPOSE_FILES:-$(./scripts/compose-files.sh "$env_file")}"
+# The configured list is only the base set. compose-files.sh appends generated
+# map workers and host-specific overlays, even when systemd exported that list.
+COMPOSE_FILES="$(./scripts/compose-files.sh "$env_file")"
 export COMPOSE_FILES
 
 compose_cmd=(docker compose)
