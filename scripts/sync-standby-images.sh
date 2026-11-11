@@ -36,8 +36,10 @@ images=(
 )
 director_override="${DUNE_DIRECTOR_IMAGE:-$(read_env DUNE_DIRECTOR_IMAGE)}"
 text_router_override="${DUNE_TEXT_ROUTER_IMAGE:-$(read_env DUNE_TEXT_ROUTER_IMAGE)}"
+gateway_override="${DUNE_GATEWAY_IMAGE:-$(read_env DUNE_GATEWAY_IMAGE)}"
 [[ -z "$director_override" ]] || images+=("$director_override")
 [[ -z "$text_router_override" ]] || images+=("$text_router_override")
+[[ -z "$gateway_override" ]] || images+=("$gateway_override")
 
 missing=()
 for image in "${images[@]}"; do

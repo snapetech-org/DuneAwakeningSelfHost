@@ -78,11 +78,13 @@ fi
 # Control-plane overlays are qualified for one vendor build and one immutable
 # local image ID. A later Steam build must not inherit an old overlay.
 declare -A control_image control_id
-for service in director text-router; do
+for service in director text-router gateway; do
   if [[ "$service" == director ]]; then
     prefix=DUNE_DIRECTOR
-  else
+  elif [[ "$service" == text-router ]]; then
     prefix=DUNE_TEXT_ROUTER
+  else
+    prefix=DUNE_GATEWAY
   fi
   image_key="${prefix}_IMAGE"
   id_key="${prefix}_IMAGE_ID"
@@ -98,7 +100,8 @@ for service in director text-router; do
     exit 2
   fi
   if [[ "$service" == director && "$override" != snape/dune-bg-director:* ]] \
-    || [[ "$service" == text-router && "$override" != snape/dune-text-router:* ]]; then
+    || [[ "$service" == text-router && "$override" != snape/dune-text-router:* ]] \
+    || [[ "$service" == gateway && "$override" != snape/dune-gateway:* ]]; then
     printf 'unapproved %s security image reference\n' "$service" >&2
     exit 2
   fi
@@ -116,7 +119,7 @@ mismatches=0
 while IFS=$'\t' read -r container_id service; do
   [[ -n "$container_id" ]] || continue
   image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
-  if [[ "$service" == director || "$service" == text-router ]]; then
+  if [[ "$service" == director || "$service" == text-router || "$service" == gateway ]]; then
     if [[ -n "${control_image[$service]:-}" ]]; then
       checked=$((checked + 1))
       actual_id="$(docker inspect --format '{{.Image}}' "$container_id")"

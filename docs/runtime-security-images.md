@@ -26,6 +26,9 @@ DUNE_DIRECTOR_VENDOR_TAG=<same value as DUNE_IMAGE_TAG>
 DUNE_TEXT_ROUTER_IMAGE=snape/dune-text-router:security-<vendor-build>
 DUNE_TEXT_ROUTER_IMAGE_ID=sha256:<64 lowercase hexadecimal characters>
 DUNE_TEXT_ROUTER_VENDOR_TAG=<same value as DUNE_IMAGE_TAG>
+DUNE_GATEWAY_IMAGE=snape/dune-gateway:security-<vendor-build>
+DUNE_GATEWAY_IMAGE_ID=sha256:<64 lowercase hexadecimal characters>
+DUNE_GATEWAY_VENDOR_TAG=<same value as DUNE_IMAGE_TAG>
 ```
 
 The running-image verifier rejects an incomplete pin, a changed loaded image,
@@ -36,7 +39,7 @@ old override forward.
 
 Deploy the committed Compose and verifier changes through the assured
 control-plane source workflow. Then update the private `.env` and recreate
-only `director` and `text-router` through the guarded host maintenance path.
+only the services with changed overlays through the guarded host maintenance path.
 Preserve the previous image IDs and configuration for rollback, run the native
 gateway neighbor seed after the control-plane restart, and verify FLS, farm
 registration, and the exact loaded image IDs. Do not recreate game map workers.
