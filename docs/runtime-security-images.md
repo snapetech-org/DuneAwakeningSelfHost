@@ -2,6 +2,17 @@
 
 ## Control-plane package overlays
 
+For the November 2026 Kerberos/libxslt advisory wave, exact-base candidates
+can be built with `images/gateway-security/Dockerfile.krb5-2026-11` and
+`images/postgres-security/Dockerfile.libxslt-2026-11`. The gateway candidate
+pins Alpine 3.24 `krb5-libs` 1.22.3-r0; the database candidate pins Alpine
+3.21 `libxslt` 1.1.42-r3 while retaining PostgreSQL 17.4. Scan the immutable
+candidate IDs and verify image configuration and base-layer lineage before
+any handoff. Alpine 3.21 is past distribution support, so a zero-finding scan
+of that database image does not establish complete vulnerability coverage.
+Keep candidates separate from live tags until the assured operator workflow
+supplies signed readiness, player checks, verified backup, and rollback.
+
 The director and text router can use locally built package overlays for a
 specific vendor build. Build each overlay from the exact vendor image selected
 by `DUNE_IMAGE_TAG`, then scan and test it before changing the private `.env`.

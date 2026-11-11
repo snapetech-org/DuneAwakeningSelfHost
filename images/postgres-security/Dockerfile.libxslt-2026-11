@@ -1,0 +1,5 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+RUN apk add --no-cache --upgrade 'libxslt=1.1.42-r3' \
+ && apk info -v | grep -qx 'libxslt-1.1.42-r3' \
+ && test "$(postgres --version | awk '{print $3}')" = 17.4
