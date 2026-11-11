@@ -13,6 +13,13 @@ of that database image does not establish complete vulnerability coverage.
 Keep candidates separate from live tags until the assured operator workflow
 supplies signed readiness, player checks, verified backup, and rollback.
 
+After the guarded November 2026 rollout, the PostgreSQL 17.4 default is
+`snape/dune-postgres:security-17.4-alpine321-fc13-libxslt-20261111`. Build it
+from the exact vendor base on each host before Compose deployment; the tag is
+local and is not a registry fallback. The rollout retained PostgreSQL 17.4,
+verified streaming replication and the required map processes, and refreshed
+the two isolated lab databases. Keep the previous image available for rollback.
+
 The director and text router can use locally built package overlays for a
 specific vendor build. Build each overlay from the exact vendor image selected
 by `DUNE_IMAGE_TAG`, then scan and test it before changing the private `.env`.
