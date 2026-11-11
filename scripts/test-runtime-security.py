@@ -123,19 +123,21 @@ class RuntimeSecurityTests(unittest.TestCase):
         settings = dict(self.settings)
         if not override:
             settings.pop("DUNE_GAME_IMAGE")
-        control_image = "snape/dune-bg-director:cve-candidate-20261110"
+        service = "gateway" if control == "gateway" else "director"
+        prefix = "DUNE_GATEWAY" if service == "gateway" else "DUNE_DIRECTOR"
+        control_image = f"snape/dune-{service if service == 'gateway' else 'bg-director'}:cve-candidate-20261110"
         if control:
-            settings["DUNE_DIRECTOR_IMAGE"] = control_image
+            settings[f"{prefix}_IMAGE"] = control_image
             if control_pin:
-                settings["DUNE_DIRECTOR_IMAGE_ID"] = self.approval["imageId"]
-                settings["DUNE_DIRECTOR_VENDOR_TAG"] = control_vendor_tag or settings["DUNE_IMAGE_TAG"]
+                settings[f"{prefix}_IMAGE_ID"] = self.approval["imageId"]
+                settings[f"{prefix}_VENDOR_TAG"] = control_vendor_tag or settings["DUNE_IMAGE_TAG"]
         env_file = self.root / ".env"
         env_file.write_text("".join(f"{k}={v}\n" for k, v in settings.items()))
         docker = self.root / "docker"
         docker.write_text("#!/usr/bin/env python3\nimport sys\na=sys.argv[1:]\n"
                           + "if a[:2] == ['image','inspect']:\n"
                           + f" print({self.approval['imageId']!r} if (a[2] if a[2] != '--format' else a[-1]).startswith('snape/') else {self.approval['vendorImageId']!r})\n"
-                          + f"elif a[0] == 'ps': print('fixture\\t{'director' if control else 'map-fixture'}')\n"
+                          + f"elif a[0] == 'ps': print('fixture\\t{service if control else 'map-fixture'}')\n"
                           + "elif a[0] == 'inspect':\n"
                           + f" print({(control_image if control else self.settings['DUNE_GAME_IMAGE'])!r} if a[2] == '{{{{.Config.Image}}}}' else {(actual_id or self.approval['imageId'])!r})\n"
                           + "else: sys.exit(3)\n")
@@ -165,6 +167,18 @@ class RuntimeSecurityTests(unittest.TestCase):
             ({"control": True, "control_pin": False}, "invalid director security image pin"),
             ({"control": True, "control_vendor_tag": "older-build"}, "invalid director security image pin"),
             ({"control": True, "actual_id": "sha256:" + "c" * 64}, "control-plane security image mismatch"),
+        ]:
+            with self.subTest(options=options):
+                result = self.verifier(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
+    def test_gateway_overlay_requires_exact_pin_and_vendor_build(self):
+        self.assertEqual(self.verifier(control="gateway").returncode, 0)
+        for options, expected in [
+            ({"control": "gateway", "control_pin": False}, "invalid gateway security image pin"),
+            ({"control": "gateway", "control_vendor_tag": "older-build"}, "invalid gateway security image pin"),
+            ({"control": "gateway", "actual_id": "sha256:" + "c" * 64}, "control-plane security image mismatch"),
         ]:
             with self.subTest(options=options):
                 result = self.verifier(**options)

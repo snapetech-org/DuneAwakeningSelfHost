@@ -405,7 +405,7 @@ services:
         ipv4_address: 172.31.240.6
 
   gateway:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}
+    image: ${DUNE_GATEWAY_IMAGE:-registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}}
     mac_address: 02:42:ac:1f:f0:28
     entrypoint: ["/usr/local/bin/dune-secret-env-wrapper.sh", "gateway"]
     dns:
