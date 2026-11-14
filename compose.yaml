@@ -120,7 +120,7 @@ secrets:
 services:
 
   docker-api-broker:
-    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753}
+    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753-libpq-17.12}
     restart: unless-stopped
     entrypoint: ["/usr/local/bin/python3"]
     command: ["/workspace/scripts/docker_api_proxy.py"]
@@ -253,7 +253,7 @@ services:
         ipv4_address: 172.31.240.4
 
   rmq-auth-shim:
-    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753}
+    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753-libpq-17.12}
     mac_address: 02:42:ac:1f:f0:07
     working_dir: /workspace
     environment:
@@ -278,7 +278,7 @@ services:
         ipv4_address: 172.31.240.7
 
   db-init:
-    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753}
+    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753-libpq-17.12}
     working_dir: /root/PSQL
     mac_address: 02:42:ac:1f:f0:42
     environment:
@@ -818,7 +818,7 @@ services:
         ipv4_address: 172.31.240.18
 
   admin-panel:
-    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753}
+    image: ${DUNE_DB_UTILS_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2173753-libpq-17.12}
     restart: unless-stopped
     mac_address: 02:42:ac:1f:f0:09
     working_dir: /workspace
@@ -1305,7 +1305,7 @@ services:
           - admin-panel-ingress
 
   admin-chat-commands:
-    image: ${DUNE_ADMIN_CHAT_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2162777}
+    image: ${DUNE_ADMIN_CHAT_SECURITY_IMAGE:-snape/dune-db-utils:python-security-2162777-libpq-17.12}
     user: "1000:1001"
     restart: unless-stopped
     read_only: true
