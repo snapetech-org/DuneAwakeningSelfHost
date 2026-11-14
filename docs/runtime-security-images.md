@@ -39,16 +39,18 @@ using it.
 
 ## Control-plane package overlays
 
-For the November 2026 Kerberos/libxslt advisory wave, exact-base candidates
-can be built with `images/gateway-security/Dockerfile.krb5-2026-11` and
-`images/postgres-security/Dockerfile.libxslt-2026-11`. The gateway candidate
-pins Alpine 3.24 `krb5-libs` 1.22.3-r0; the database candidate pins Alpine
-3.21 `libxslt` 1.1.42-r3 while retaining PostgreSQL 17.4. Scan the immutable
-candidate IDs and verify image configuration and base-layer lineage before
-any handoff. Alpine 3.21 is past distribution support, so a zero-finding scan
-of that database image does not establish complete vulnerability coverage.
-Keep candidates separate from live tags until the assured operator workflow
-supplies signed readiness, player checks, verified backup, and rollback.
+For the November 2026 package advisory wave, exact-base candidates can be
+built with `images/gateway-security/Dockerfile.krb5-2026-11` and
+`images/postgres-security/Dockerfile.libxslt-2026-11`. The gateway overlay pins
+Alpine 3.24 `krb5-libs` 1.22.3-r0 and `libpq` 18.7-r0. An exact scan of the
+running gateway image found 38 HIGH records in `libpq` 18.6-r0; Trivy identifies
+18.7-r0 as fixed. The database candidate pins Alpine 3.21 `libxslt` 1.1.42-r3
+while retaining PostgreSQL 17.4. Scan immutable candidate IDs and verify image
+configuration and base-layer lineage before any handoff. Alpine 3.21 is past
+distribution support, so a zero-finding scan of that database image does not
+establish complete vulnerability coverage. Keep candidates separate from live
+tags until the assured operator workflow supplies signed readiness, player
+checks, verified backup, and rollback.
 
 After the guarded November 2026 rollout, the PostgreSQL 17.4 default is
 `snape/dune-postgres:security-17.4-alpine321-fc13-libxslt-20261111`. Build it
