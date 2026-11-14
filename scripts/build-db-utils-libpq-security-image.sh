@@ -76,10 +76,28 @@ test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$candidate_
 test "$(docker image inspect --format '{{index .Config.Labels "tech.snape.security.base-image-id"}}' "$candidate_id")" = \
   "$base_id"
 test "$(docker image inspect --format '{{index .Config.Labels "tech.snape.security.package"}}' "$candidate_id")" = \
-  'libpq=17.12-r0'
+  'postgresql17=17.12-r0,postgresql17-client=17.12-r0,libpq=17.12-r0'
 
-docker run --rm --network none --entrypoint python "$candidate_id" -c \
-  'from pathlib import Path; import re; db=Path("/lib/apk/db/installed").read_text(); match=re.search(r"(?m)^P:libpq\nV:([^\n]+)", db); assert match and match.group(1)=="17.12-r0", match.group(1) if match else "libpq missing"; import psycopg2; print("libpq="+match.group(1)+" psycopg2="+psycopg2.__version__)'
+docker run --rm --network none --entrypoint python "$candidate_id" -c '
+from pathlib import Path
+import re
+import subprocess
+
+db = Path("/lib/apk/db/installed").read_text()
+expected = {
+    "postgresql17": "17.12-r0",
+    "postgresql17-client": "17.12-r0",
+    "libpq": "17.12-r0",
+}
+actual = {
+    name: re.search(rf"(?m)^P:{re.escape(name)}\nV:([^\n]+)", db)
+    for name in expected
+}
+versions = {name: match.group(1) if match else "missing" for name, match in actual.items()}
+assert all(actual[name] and versions[name] == version for name, version in expected.items()), versions
+import psycopg2
+pg_dump = subprocess.check_output(["pg_dump", "--version"], text=True).strip()
+print(f"packages={versions} psycopg2={psycopg2.__version__} {pg_dump}")'
 
 printf 'base_ref=%s\nbase_id=%s\ncandidate_ref=%s\ncandidate_id=%s\n' \
   "$base_ref" "$base_id" "$candidate_ref" "$candidate_id"

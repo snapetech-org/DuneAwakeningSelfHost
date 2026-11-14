@@ -3,13 +3,15 @@
 ## Dune utility PostgreSQL client library update
 
 The Dune utility image bases for vendor builds `2162777` and `2173753` use
-Alpine 3.21 and carry `libpq 17.11-r0`. The November 2026 PostgreSQL security
-release is available as Alpine `libpq 17.12-r0`. Build each candidate from the
-exact local base image ID. The helper resolves the source tag once, creates a
-temporary local alias for that immutable ID because BuildKit does not accept a
-bare image ID in `FROM`, and disables image pulls. It refuses to overwrite
-candidate tags and preserves the base image's user, working directory, and
-entrypoint.
+Alpine 3.21 and carry PostgreSQL `17.11-r0` packages. The November 2026
+PostgreSQL security release is available as Alpine `17.12-r0`. Build each
+candidate from the exact local base image ID. The helper resolves the source
+tag once, creates a temporary local alias for that immutable ID because
+BuildKit does not accept a bare image ID in `FROM`, and disables image pulls.
+It refuses to overwrite candidate tags and preserves the base image's user,
+working directory, and entrypoint. It upgrades and verifies
+`postgresql17`, `postgresql17-client`, and `libpq` together because Trivy
+reports PostgreSQL CVEs against both the server and client packages.
 
 The local base images are not published to a registry, so the package-only
 image build runs on a trusted Docker host that already has each base. Repository
@@ -25,10 +27,10 @@ Example candidate builds:
 ```sh
 scripts/build-db-utils-libpq-security-image.sh \
   snape/dune-db-utils:python-security-2162777 \
-  snape/dune-db-utils:python-security-2162777-libpq-17.12
+  snape/dune-db-utils:python-security-2162777-postgresql-17.12
 scripts/build-db-utils-libpq-security-image.sh \
   snape/dune-db-utils:python-security-2173753 \
-  snape/dune-db-utils:python-security-2173753-libpq-17.12
+  snape/dune-db-utils:python-security-2173753-postgresql-17.12
 ```
 
 The Compose defaults reference these version-bound candidates. The build helper
