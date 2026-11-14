@@ -20,14 +20,28 @@ DOCKER_BUILDKIT=0 docker build \
   --tag "$candidate_image" \
   "$repo_root/images/postgres-security"
 
-mapfile -t base_layers < <(docker image inspect "$base_image" --format '{{range .RootFS.Layers}}{{println .}}{{end}}')
-mapfile -t candidate_layers < <(docker image inspect "$candidate_image" --format '{{range .RootFS.Layers}}{{println .}}{{end}}')
-for index in "${!base_layers[@]}"; do
-  [[ "${candidate_layers[$index]:-}" == "${base_layers[$index]}" ]] || {
-    printf 'candidate does not preserve base layer %s\n' "$index" >&2
-    exit 1
-  }
-done
+python3 - "$base_image" "$candidate_image" <<'PY'
+import json
+import subprocess
+import sys
+
+
+def layers(image):
+    raw = subprocess.check_output(
+        ["docker", "image", "inspect", image, "--format", "{{json .RootFS.Layers}}"],
+        text=True,
+    )
+    return json.loads(raw)
+
+
+base_layers, candidate_layers = map(layers, sys.argv[1:])
+if candidate_layers[: len(base_layers)] != base_layers:
+    raise SystemExit("candidate does not preserve the exact base layer prefix")
+print(
+    f"verified {len(base_layers)} unchanged base layers and "
+    f"{len(candidate_layers) - len(base_layers)} candidate layer(s)"
+)
+PY
 
 actual_version="$(docker run --rm "$candidate_image" postgres --version | awk '{print $3}')"
 [[ "$actual_version" == "$expected_version" ]] || {
