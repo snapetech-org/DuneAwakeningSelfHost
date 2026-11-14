@@ -36,7 +36,9 @@ ID_RE = re.compile(r"[a-fA-F0-9]{12,64}\Z")
 PG_NAME_RE = re.compile(r"dash-restore-drill-[a-f0-9]{12}\Z")
 PG_IMAGES = {
     "registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13",
-    "snape/dune-postgres:security-17.4-alpine321-fc13",
+    "snape/dune-postgres:security-17.4-alpine321-fc13",  # historical rollback image
+    "snape/dune-postgres:security-17.4-alpine321-fc13-libxslt-20261111",
+    "snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114",
 }
 RMQ_NAME_RE = re.compile(r"dash-rmq-restore-drill-[A-Za-z0-9_.-]{1,64}-[a-f0-9]{10}\Z")
 RMQ_IMAGE_RE = re.compile(

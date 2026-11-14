@@ -21,7 +21,7 @@ import time
 import urllib.parse
 
 
-DEFAULT_IMAGE = "snape/dune-postgres:security-17.4-alpine321-fc13"
+DEFAULT_IMAGE = "snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114"
 CONTAINER_PREFIX = "dash-restore-drill-"
 LABEL_KEY = "com.dash.restore-drill"
 REQUIRED_TABLES = (

@@ -89,7 +89,7 @@ current_refs() {
   fi
   printf '%s\n' \
     'registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13' \
-    "${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}"
+    "${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114}"
 }
 
 protected_image_ids() {

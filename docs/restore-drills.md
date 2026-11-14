@@ -79,7 +79,7 @@ The engine performs these stages in order:
 2. Hash the complete source archive with SHA-256 and record its mtime and size.
 3. Remove only stopped or stale containers carrying both DASH's exact restore
    label and name prefix.
-4. Start the no-network PostgreSQL 17.4 container and inspect its applied
+4. Start the no-network PostgreSQL 17.12 container and inspect its applied
    isolation.
 5. Run `pg_restore --list` on the source.
 6. Run `pg_restore --exit-on-error --no-owner --no-privileges` into a fresh
@@ -215,7 +215,7 @@ and certify the active workspace's local newest dump.
 | `DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED` | `false` | Permit browser queueing. The host timer/CLI are independent. |
 | `DUNE_RESTORE_DRILL_HOST_WORKSPACE` | required in container | Absolute host checkout path used only to bind the private staging copy. |
 | `DUNE_RESTORE_DRILL_DOCKER_SOCKET` | `/var/run/docker.sock` | Local Docker Engine Unix socket. |
-| `DUNE_RESTORE_DRILL_IMAGE` | Funcom PostgreSQL 17.4 | Already-loaded image; never pulled by the drill. |
+| `DUNE_RESTORE_DRILL_IMAGE` | pinned PostgreSQL 17.12 security image | Already-loaded image; never pulled by the drill. |
 | `DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` | `36` | RPO freshness target. |
 | `DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS` | `900` | `pg_restore` RTO target. |
 | `DUNE_RESTORE_DRILL_MEMORY_MIB` | `2048` | Hard container memory and swap limit. |

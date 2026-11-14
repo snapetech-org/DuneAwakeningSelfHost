@@ -52,21 +52,36 @@ establish complete vulnerability coverage. Keep candidates separate from live
 tags until the assured operator workflow supplies signed readiness, player
 checks, verified backup, and rollback.
 
-The November 14 exact-base candidate refreshes Alpine PostgreSQL client
-packages from `17.11-r0` to `17.12-r0` while preserving server and restore-tool
-version `17.4`. It preserves all 17 layers of the exact vendor base and adds
-one package-update layer. The immutable candidate passed Trivy 0.76.2 with
-zero HIGH/CRITICAL findings and no scan errors, and an isolated networkless
-server startup plus SQL version probe passed. This qualifies the image only;
-production promotion remains subject to the operator-only zero-player,
-verified-backup, replication, logical-restore, and rollback gates.
+The package-only PostgreSQL 17.4 / Alpine 3.21 candidate was rejected: the
+server remained at 17.4 and Alpine 3.21 is out of support. A first candidate
+from the pinned official PostgreSQL 17.12 / Alpine 3.24 base also failed the
+exact-image gate with 1 CRITICAL and 25 HIGH findings in the bundled `gosu`
+binary, which used Go 1.24.6.
 
-After the guarded November 2026 rollout, the PostgreSQL 17.4 default is
-`snape/dune-postgres:security-17.4-alpine321-fc13-libxslt-20261111`. Build it
-from the exact vendor base on each host before Compose deployment; the tag is
-local and is not a registry fallback. The rollout retained PostgreSQL 17.4,
-verified streaming replication and the required map processes, and refreshed
-the two isolated lab databases. Keep the previous image available for rollback.
+The current candidate rebuilds upstream `gosu` 1.19 commit
+`6456aaa0f3c854d199d0f037f068eb97515b7513` with pinned Go 1.27.4, while
+retaining the official PostgreSQL 17.12 / Alpine 3.24 AMD64 base and adding
+Python 3 for the container healthcheck. Exact image ID
+`sha256:a9516f0a1b50486ac3b457e9d64e4aef1ac0d737e4f28c9bd738d7a30aea4e5f`
+passed Trivy 0.76.2 with zero HIGH and zero CRITICAL findings and no scan
+errors. Offline startup, `pg_trgm`, `pgcrypto`, and `pg_restore` checks passed.
+A fresh production logical dump restored in the isolated networkless rehearsal;
+schema, native player-recovery contract, round-trip archive, and integrity
+checks passed without touching the live database. The full production backup at
+`backups/20261114T170334Z` was freshly verified, including the database dump,
+archives, SQLite databases and HMAC chains, operator evidence capsules, manifest,
+and protected environment copy. Production promotion remains operator-only and
+requires fresh four zero-player gates, a streaming standby, and exact-image
+rollback proof immediately before the change. The PostgreSQL 17.12 change is
+being delivered through the existing pull request on compatible public
+GitHub-hosted runners.
+
+The PostgreSQL 17.4 / Alpine 3.21 overlay above is retained only as historical
+rollback documentation. Alpine 3.21 is out of support. The current tag is
+`snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114`.
+PostgreSQL 17.12 is a same-major update; retain the previous local image and
+exact ID for rollback. Do not use `apk upgrade` to change PostgreSQL server
+binaries: the server version must come from the pinned base image.
 
 The director and text router can use locally built package overlays for a
 specific vendor build. Build each overlay from the exact vendor image selected

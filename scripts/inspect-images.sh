@@ -10,7 +10,7 @@ images=(
   "registry.funcom.com/funcom/self-hosting/seabass-server-text-router:$tag"
   "registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:$tag"
   "registry.funcom.com/funcom/self-hosting/seabass-server:$tag"
-  "${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}"
+  "${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114}"
 )
 
 docker image inspect "${images[@]}" |

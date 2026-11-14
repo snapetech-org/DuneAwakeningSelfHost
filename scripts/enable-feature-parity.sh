@@ -143,7 +143,7 @@ set_value DUNE_HOST_UID "$(id -u)"
 set_value DUNE_HOST_GID "$(id -g)"
 set_value DUNE_RESTORE_DRILL_HOST_WORKSPACE "$repo_root"
 set_value DUNE_RESTORE_DRILL_DOCKER_SOCKET /var/run/docker.sock
-set_value DUNE_RESTORE_DRILL_IMAGE snape/dune-postgres:security-17.4-alpine321-fc13
+set_value DUNE_RESTORE_DRILL_IMAGE snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114
 set_value DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS 36
 set_value DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS 900
 set_value DUNE_RESTORE_DRILL_MEMORY_MIB 2048
