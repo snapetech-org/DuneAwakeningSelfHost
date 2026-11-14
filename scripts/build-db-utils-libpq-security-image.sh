@@ -30,13 +30,37 @@ base_id="$(docker image inspect --format '{{.Id}}' "$base_ref")"
 }
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+base_alias="snape/dune-db-utils:local-base-${base_id#sha256:}"
+if docker image inspect "$base_alias" >/dev/null 2>&1; then
+  printf 'temporary base alias already exists; inspect it before retrying: %s\n' "$base_alias" >&2
+  exit 1
+fi
 context="$(mktemp -d)"
+alias_created=false
+cleanup() {
+  local status=0
+  if [[ "$alias_created" == true ]]; then
+    if ! docker image rm --no-prune "$base_alias" >/dev/null; then
+      printf 'could not remove temporary base alias: %s\n' "$base_alias" >&2
+      status=1
+    fi
+  fi
+  if [[ -d "$context" ]] && ! rmdir -- "$context"; then
+    printf 'could not remove empty build context: %s\n' "$context" >&2
+    status=1
+  fi
+  return "$status"
+}
+trap cleanup EXIT
 chmod 0700 "$context"
-trap 'rm -rf -- "$context"' EXIT
+
+# BuildKit accepts a local tag as FROM and --pull=false prevents registry fallback.
+docker image tag "$base_id" "$base_alias"
+alias_created=true
 
 docker build --pull=false --no-cache \
   --file "$script_dir/../images/db-utils-security/Dockerfile.libpq-2026-11" \
-  --build-arg "BASE_IMAGE=$base_id" \
+  --build-arg "BASE_IMAGE=$base_alias" \
   --build-arg "BASE_IMAGE_ID=$base_id" \
   --tag "$candidate_ref" \
   "$context"

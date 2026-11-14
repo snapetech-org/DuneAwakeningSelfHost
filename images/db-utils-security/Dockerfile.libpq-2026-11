@@ -1,4 +1,4 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=local.invalid/dune-db-utils:override-required
 FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE_ID

@@ -5,9 +5,11 @@
 The Dune utility image bases for vendor builds `2162777` and `2173753` use
 Alpine 3.21 and carry `libpq 17.11-r0`. The November 2026 PostgreSQL security
 release is available as Alpine `libpq 17.12-r0`. Build each candidate from the
-exact local base image ID; the helper resolves the source tag once and uses
-that immutable ID as `FROM`. It refuses to overwrite candidate tags and
-preserves the base image's user, working directory, and entrypoint.
+exact local base image ID. The helper resolves the source tag once, creates a
+temporary local alias for that immutable ID because BuildKit does not accept a
+bare image ID in `FROM`, and disables image pulls. It refuses to overwrite
+candidate tags and preserves the base image's user, working directory, and
+entrypoint.
 
 The local base images are not published to a registry, so the package-only
 image build runs on a trusted Docker host that already has each base. Repository
