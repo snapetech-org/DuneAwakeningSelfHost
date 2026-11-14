@@ -14,6 +14,7 @@ actual_base_id="$(docker image inspect "$base_image" --format '{{.Id}}')"
 }
 
 DOCKER_BUILDKIT=0 docker build \
+  --no-cache \
   --build-arg "BASE_IMAGE=$base_image" \
   --build-arg "EXPECTED_POSTGRES_VERSION=$expected_version" \
   --file "$repo_root/images/postgres-security/Dockerfile" \

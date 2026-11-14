@@ -23,6 +23,7 @@ class PostgresSecurityImageTest(unittest.TestCase):
         )
         self.assertIn("EXPECTED_POSTGRES_VERSION:-17.4", script)
         self.assertIn("candidate does not preserve base layer", script)
+        self.assertIn("--no-cache", script)
         self.assertNotIn("docker pull", script)
 
     def test_restore_proxy_approves_only_bound_vendor_and_security_images(self):
