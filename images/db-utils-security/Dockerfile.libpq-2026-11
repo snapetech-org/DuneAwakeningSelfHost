@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=local.invalid/dune-db-utils:override-required
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE_ID
+
+RUN apk add --no-cache --upgrade \
+      'postgresql17=17.12-r0' \
+      'postgresql17-client=17.12-r0' \
+      'libpq=17.12-r0'
+
+LABEL tech.snape.security.base-image-id="${BASE_IMAGE_ID}" \
+      tech.snape.security.package="postgresql17=17.12-r0,postgresql17-client=17.12-r0,libpq=17.12-r0"

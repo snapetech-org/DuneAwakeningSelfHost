@@ -1,4 +1,3 @@
-# ng-runner-policy: private-jit-only-v1
 name: Validate
 
 on:
@@ -16,7 +15,7 @@ permissions:
 jobs:
   validate:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-duneawakeningselfhost","ng-main-run-{0}","gha-{0}-validate"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:

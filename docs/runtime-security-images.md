@@ -1,5 +1,42 @@
 # Qualified game runtime images
 
+## Dune utility PostgreSQL client library update
+
+The Dune utility image bases for vendor builds `2162777` and `2173753` use
+Alpine 3.21 and carry PostgreSQL `17.11-r0` packages. The November 2026
+PostgreSQL security release is available as Alpine `17.12-r0`. Build each
+candidate from the exact local base image ID. The helper resolves the source
+tag once, creates a temporary local alias for that immutable ID because
+BuildKit does not accept a bare image ID in `FROM`, and disables image pulls.
+It refuses to overwrite candidate tags and preserves the base image's user,
+working directory, and entrypoint. It upgrades and verifies
+`postgresql17`, `postgresql17-client`, and `libpq` together because Trivy
+reports PostgreSQL CVEs against both the server and client packages.
+
+The local base images are not published to a registry, so the package-only
+image build runs on a trusted Docker host that already has each base. Repository
+validation and source scans use the compatible public GitHub-hosted runner.
+Keep candidates separate from live references until the exact image IDs pass a
+Trivy scan with zero HIGH/CRITICAL findings and no scan errors, `python`
+imports `psycopg2` successfully, the Dune utility safety suite passes, and a
+fresh rollback backup is verified. Promote only the matching utility services
+with `--no-deps`; preserve all game worker container IDs and images.
+
+Example candidate builds:
+
+```sh
+scripts/build-db-utils-libpq-security-image.sh \
+  snape/dune-db-utils:python-security-2162777 \
+  snape/dune-db-utils:python-security-2162777-postgresql-17.12
+scripts/build-db-utils-libpq-security-image.sh \
+  snape/dune-db-utils:python-security-2173753 \
+  snape/dune-db-utils:python-security-2173753-postgresql-17.12
+```
+
+The Compose defaults reference these version-bound candidates. The build helper
+does not start or recreate containers; scan and qualify each exact image before
+using it.
+
 ## Control-plane package overlays
 
 For the November 2026 Kerberos/libxslt advisory wave, exact-base candidates
