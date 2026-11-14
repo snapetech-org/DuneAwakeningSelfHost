@@ -54,12 +54,12 @@ checks, verified backup, and rollback.
 
 The November 14 exact-base candidate refreshes Alpine PostgreSQL client
 packages from `17.11-r0` to `17.12-r0` while preserving server and restore-tool
-version `17.4`. The immutable candidate passed Trivy 0.76.2 with zero
-HIGH/CRITICAL findings and no scan errors, and an isolated networkless server
-startup plus SQL version probe passed. Its 19-layer base prefix matches the
-live image exactly. This qualifies the image only; the primary and standby
-remain on the previous image until the operator-only zero-player, verified
-backup, replication, logical-restore, and rollback gates pass.
+version `17.4`. It preserves all 17 layers of the exact vendor base and adds
+one package-update layer. The immutable candidate passed Trivy 0.76.2 with
+zero HIGH/CRITICAL findings and no scan errors, and an isolated networkless
+server startup plus SQL version probe passed. This qualifies the image only;
+production promotion remains subject to the operator-only zero-player,
+verified-backup, replication, logical-restore, and rollback gates.
 
 After the guarded November 2026 rollout, the PostgreSQL 17.4 default is
 `snape/dune-postgres:security-17.4-alpine321-fc13-libxslt-20261111`. Build it
