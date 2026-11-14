@@ -40,7 +40,7 @@ director_image="${director_image:-registry.funcom.com/funcom/self-hosting/seabas
 text_router_image="${DUNE_TEXT_ROUTER_IMAGE:-$(read_env DUNE_TEXT_ROUTER_IMAGE)}"
 text_router_image="${text_router_image:-registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${image_tag}}"
 db_utils_image="registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${image_tag}"
-postgres_image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.4-alpine321-fc13}}"
+postgres_image="${POSTGRES_IMAGE:-${DUNE_POSTGRES_SECURITY_IMAGE:-snape/dune-postgres:security-17.12-alpine3.24-gosu1.19-go1.27.4-20261114}}"
 
 printf '== primary replication slot: %s ==\n' "$slot"
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "
