@@ -21,8 +21,7 @@ verify source routing, broker policy, runner-group access and live capacity
 before relying on it.
 
 The repo-specific owner directive above supersedes the older organization-wide
-private-only policy. CodeQL remains disabled; retain the other security scans
-and their reports.
+private-only policy. Retain the other security scans and their reports.
 
 # Agent instructions - DuneAwakeningSelfHost
 
