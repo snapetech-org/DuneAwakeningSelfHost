@@ -65,7 +65,7 @@ class FakeDocker:
             return 0, ""
         if argv and argv[0] == "psql" and "missingTables" in joined:
             return 0, json.dumps({
-                "database": "drill", "postgresVersion": "17.4", "missingTables": [],
+                "database": "drill", "postgresVersion": "17.12", "missingTables": [],
                 "missingFunctions": [], "invalidIndexes": 0,
                 "unvalidatedConstraints": 0, "databaseBytes": 987654,
             }) + "\n"
