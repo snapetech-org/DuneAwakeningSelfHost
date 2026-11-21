@@ -2,6 +2,7 @@
 # Export and scan the very archive an operator will load. A failing report is retained.
 set -euo pipefail
 tag=${1:?usage: scan-security-candidate.sh LOCAL_CANDIDATE OUTPUT_DIRECTORY}
+required=${3:?missing required Trivy result type (os-pkgs, gobinary or dotnet-core)}
 out=$(realpath "${2:?missing output directory}")
 id=$(docker image inspect --format '{{.Id}}' "$tag")
 [[ $id =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -18,10 +19,11 @@ config=$(tar -xOf candidate.tar manifest.json | jq -er 'select(length == 1) | .[
 digest=$(tar -xOf candidate.tar "$config" | sha256sum | cut -d' ' -f1)
 trivy image --input candidate.tar --scanners vuln --pkg-types os,library --severity HIGH,CRITICAL \
   --ignorefile /dev/null --format json --output scan.json --timeout 30m
-jq -e --arg config "sha256:$digest" '
+jq -e --arg config "sha256:$digest" --arg required "$required" '
   .Metadata.ImageID == $config and
   ((.Errors // []) | length == 0) and
-  any(.Results[]; .Class == "os-pkgs" or .Type == "gobinary") and
+  any(.Results[]; .Class == $required or .Type == $required) and
+  (if .Metadata.OS then any(.Results[]; .Class == "os-pkgs") else true end) and
   all(.Results[]; ((.Errors // []) | length == 0) and ((.Vulnerabilities // []) | length == 0))
 ' scan.json >/dev/null || { echo "Candidate failed the scan gate. See $out/scan.json" >&2; exit 1; }
 sha256sum candidate.tar scan.json candidate.id candidate.tag > SHA256SUMS

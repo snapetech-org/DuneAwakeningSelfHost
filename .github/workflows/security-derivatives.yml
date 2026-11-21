@@ -8,9 +8,16 @@ on:
     branches: [main]
     paths:
       - .github/workflows/security-derivatives.yml
-      - scripts/build-*-security*.sh
+      - scripts/build-public-security-image.sh
+      - scripts/build-postgres-security-image.sh
+      - scripts/build-cadvisor-security.sh
+      - scripts/build-prometheus-security.sh
+      - scripts/build-node-exporter-security.sh
+      - scripts/build-postgres-exporter-security.sh
       - scripts/scan-security-candidate.sh
-      - scripts/security-images/**
+      - scripts/security-images/admin-ingress/**
+      - scripts/security-images/cadvisor-builder.Dockerfile
+      - scripts/security-images/go-builder.sh
       - images/postgres-security/Dockerfile
       - config/admin-ingress.Caddyfile
 

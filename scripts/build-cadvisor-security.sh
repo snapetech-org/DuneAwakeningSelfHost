@@ -30,7 +30,7 @@ docker run --rm --cpus=2 --memory=6g --cap-drop ALL --cap-add DAC_OVERRIDE \
 git -C "$root/source" diff -- '*.mod' '*.sum' > "$root/dependency.patch"
 docker build --no-cache --pull=false -t "$target" -f - "$root/source" <<DOCKERFILE
 FROM ghcr.io/google/cadvisor@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
-RUN apk --no-cache upgrade musl musl-utils zlib krb5-libs
+RUN apk --no-cache upgrade
 COPY cadvisor /usr/bin/cadvisor
 DOCKERFILE
 docker image inspect "$target" > "$root/image.json"

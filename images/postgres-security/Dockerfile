@@ -16,13 +16,17 @@ RUN apk add --no-cache git \
 
 FROM ${BASE_IMAGE}
 ARG EXPECTED_POSTGRES_VERSION=17.12
+ARG EXPECTED_GO_VERSION=go1.27.4
 COPY --from=gosu-build /out/gosu /usr/local/bin/gosu
 RUN test -f /etc/alpine-release \
  && grep -q '^3\.24\.' /etc/alpine-release \
+ && sha256sum "$(command -v postgres)" "$(command -v pg_restore)" >/tmp/postgres-binaries.sha256 \
+ && apk upgrade --no-cache \
  && apk add --no-cache python3 \
+ && sha256sum -c /tmp/postgres-binaries.sha256 && rm /tmp/postgres-binaries.sha256 \
  && test "$(postgres --version | awk '{print $3}')" = "$EXPECTED_POSTGRES_VERSION" \
  && test -f "$(pg_config --pkglibdir)/pg_trgm.so" \
  && test -f "$(pg_config --pkglibdir)/pgcrypto.so" \
  && pg_restore --version \
  && python3 --version \
- && gosu --version | grep -F 'go1.27.4'
+ && gosu --version | grep -F "$EXPECTED_GO_VERSION"

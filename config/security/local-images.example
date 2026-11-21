@@ -1,0 +1,10 @@
+# NAME           COMPONENT    SOURCE
+# Adjust each source to the official package actually used by the deployment.
+game             game         @env
+director         director     registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:{vendor_tag}
+text-router      text-router  registry.funcom.com/funcom/self-hosting/seabass-server-text-router:{vendor_tag}
+gateway          gateway      registry.funcom.com/funcom/self-hosting/seabass-server-gateway:{vendor_tag}
+db-utils         db-utils     registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:2173753-0-shipping
+admin-chat       db-utils     registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:2162777-0-shipping
+rabbitmq         rabbitmq     registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:2168446-0-shipping
+steamcmd         steamcmd     cm2network/steamcmd:root

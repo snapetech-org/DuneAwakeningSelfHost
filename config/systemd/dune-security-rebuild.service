@@ -1,0 +1,18 @@
+[Unit]
+Description=Build and scan Dune security image candidates
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dash
+Group=dash
+SupplementaryGroups=docker
+WorkingDirectory=/path/to/DuneAwakeningSelfHost
+ExecStart=/usr/bin/python3 scripts/refresh-local-security-images.py /etc/dune-security/local-images /var/lib/dune-security-candidates
+StateDirectory=dune-security-candidates
+StateDirectoryMode=0700
+UMask=0077
+Nice=10
+TimeoutStartSec=6h

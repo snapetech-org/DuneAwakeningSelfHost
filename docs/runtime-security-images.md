@@ -1,4 +1,83 @@
-# Qualified game runtime images
+# Building and qualifying security images
+
+## Scheduled rebuilds for self-hosters
+
+The **Rebuild security derivatives** GitHub Actions workflow runs daily on public
+Linux AMD64 runners and accepts manual dispatches. Each job downloads the current
+Go 1.27 patch for Alpine 3.24, verifies the compiler version, builds a candidate,
+and scans a Docker archive by its image-config digest. A build or scan failure
+fails that component independently. The evidence artifact includes the raw Trivy
+HIGH/CRITICAL report when scanning completes. A passing job also publishes a
+candidate archive for two days. Fork owners can enable Actions and the scheduled
+workflow, or run the same entry point locally:
+
+```sh
+scripts/build-public-security-image.sh postgres /path/to/new-output-directory
+```
+
+| Component | Rebuild and compatibility checks | Deployment setting |
+| --- | --- | --- |
+| `postgres` | Official PostgreSQL 17 patch on Alpine 3.24, distribution packages and a source-built gosu. The server and restore binaries must survive the package upgrade byte-for-byte. Check extensions, Python and pg_restore. | `DUNE_POSTGRES_SECURITY_IMAGE`, replica and restore drill |
+| `prometheus` | Pinned upstream source and UI bundle, patched Go dependencies, upstream web tests with embedded assets | `DUNE_METRICS_PROMETHEUS_IMAGE` |
+| `node-exporter` | Pinned source, unpacked fixtures and collector tests | `DUNE_METRICS_NODE_EXPORTER_IMAGE` |
+| `postgres-exporter` | Pinned source and upstream short test suite | `DUNE_METRICS_POSTGRES_EXPORTER_IMAGE` |
+| `cadvisor` | Pinned source and base, native libpfm build, refreshed Alpine packages and model/metrics tests | `DUNE_METRICS_CADVISOR_IMAGE` |
+| `admin-ingress` | Caddy 2.11.9 with its MaxMind module and patched Go dependencies. Validate the repository Caddyfile. | `DUNE_ADMIN_INGRESS_IMAGE` |
+
+Download the matching `candidate-<component>` and `evidence-<component>`
+artifacts from **one successful job** into the same private directory. Run
+`sha256sum -c SHA256SUMS` before `docker load -i candidate.tar`. The archive
+is saved by immutable ID. Tag the loaded image locally for the intended
+service after qualification. Docker engines with different image stores can
+report different loaded IDs. Compare the archive config and rootfs diff IDs
+and rescan the loaded image before pinning it. Rehearse PostgreSQL backup,
+restore and replication. For monitoring, compare targets, series and collector
+errors against the previous image. For ingress, compare modules, headers and a
+served page. Retain the previous image and recovery evidence.
+
+### Local vendor images and SteamCMD
+
+Use a Linux AMD64 Docker host with Docker BuildKit, Python 3, jq, tar and Trivy
+0.76.2 on PATH. Load the official vendor images from the operator's Steam
+package. Copy `config/security/local-images.example` to an owner-controlled
+inventory and select the actual source for each service. Each row names an
+independent build. `{vendor_tag}` reads `DUNE_IMAGE_TAG` from the chosen env
+file. Utility and broker versions can differ from the map worker. A source
+image must already be loaded. The .NET runtime and distro updates need network
+access. The game check also needs GCC, pip and the pinned scanner image used by
+`scripts/qualify-game-runtime.py`.
+
+```sh
+scripts/refresh-local-security-images.py /etc/dune-security/local-images     /var/lib/dune-security-candidates --env-file .env
+```
+
+Each run writes an owner-private timestamped directory with component logs and
+exit codes. An individual failure leaves the other builds eligible. Passing
+images have a unique staging tag, a scan report and checksums. Game builds use
+the existing payload verification, a fresh unique tag and a new private approval.
+The batch only stages candidates. The operator selects the exact image through
+the existing readiness, backup, canary and rollback procedure.
+
+To schedule it, adapt `config/systemd/dune-security-rebuild.service` to the
+checkout path and operator account, install the service and its sibling timer
+under `/etc/systemd/system/`, run `systemctl daemon-reload`, and enable
+`dune-security-rebuild.timer`. Reserve space for game rootfs comparisons, image
+archives and Docker builds. Move approved evidence and rollback images into
+protected storage before expiring old staging directories and their unique tags.
+
+| Local component | Patch applied and qualification |
+| --- | --- |
+| `game` | Vendor game payload, native libraries and embedded Python compatibility are checked against the exact base. `--fresh` rebuilds even when an earlier approval exists. |
+| `director`, `text-router` | Extract the vendor .NET bundle, replace only managed framework assets from the official Linux musl ASP.NET 10.0 patch image, retain application DLLs and configuration, upgrade Alpine and smoke-test the original entrypoint. The recipe rejects unknown framework layouts and downgrades. Verify FLS, farm registration and actual routing in a canary. |
+| `gateway` | Refresh Alpine packages, enforce the Kerberos and libpq security floors, and import the native PostgreSQL driver. Verify neighbor seeding after a guarded restart. |
+| `db-utils` | Rebuild CPython 3.12.16 from checksummed source, retain vendor site packages, update pip's bundled packaging code and the PostgreSQL 17 server/client libraries. Test the broker, auth shim, DB tools and admin commands before promoting their respective overrides. |
+| `rabbitmq` | Apply distro fixes on the selected vendor base and verify the original RabbitMQ version. For an operator-side restore proof with both brokers on one exact deployed image, run `scripts/dune-rabbitmq-restore-current-image.py --workspace "$PWD" --project dune_server`. |
+| `steamcmd` | From an already loaded Debian trixie SteamCMD root image, prune unused curl/Kerberos dependencies, refresh selected Debian packages from sid and run `steamcmd.sh +quit` as UID 1000. Set `DUNE_RESTART_STEAMCMD_HELPER_IMAGE` after qualification. |
+
+The November SteamCMD rehearsal recorded **47 raw HIGH findings** and zero
+applicable HIGH findings after review against exact Debian package versions.
+A rebuild retains its own raw report and fails on any HIGH/CRITICAL result.
+The historical assessment applies only to that reviewed image and package set.
 
 ## Dune utility PostgreSQL client library update
 
@@ -114,9 +193,7 @@ Preserve the previous image IDs and configuration for rollback, run the native
 gateway neighbor seed after the control-plane restart, and verify FLS, farm
 registration, and the exact loaded image IDs. Do not recreate game map workers.
 
-The November 2026 package overlays update musl, zlib, and related Alpine
-packages. They do not replace the vendor-bundled .NET runtime; its remaining
-scanner findings require a qualified vendor republish.
+The November Director and Text Router derivatives also replaced the bundled .NET 10.0.12 framework with 10.0.15. Build the current shared-runtime derivative using the local inventory above.
 
 The default game image remains the vendor image selected by `DUNE_IMAGE_TAG`.
 An operator can opt into a locally qualified runtime with `DUNE_GAME_IMAGE`

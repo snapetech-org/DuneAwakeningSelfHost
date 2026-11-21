@@ -26,6 +26,7 @@ actual_go_builder_id="$(docker image inspect "$go_builder_image" --format '{{.Id
 docker build --no-cache --platform linux/amd64 \
   --build-arg "BASE_IMAGE=$base_image" \
   --build-arg "GO_BUILDER_IMAGE=$go_builder_image" \
+  --build-arg "EXPECTED_GO_VERSION=${EXPECTED_GO_VERSION:-go1.27.4}" \
   --build-arg "GOSU_COMMIT=$gosu_commit" \
   --build-arg "EXPECTED_POSTGRES_VERSION=$expected_version" \
   --file "$repo_root/images/postgres-security/Dockerfile" \

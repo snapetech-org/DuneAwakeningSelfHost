@@ -29,8 +29,8 @@ case "$component" in
     [[ $version =~ ^17\.([0-9]+)$ && ${BASH_REMATCH[1]} -ge 12 ]]
     BASE_IMAGE="$pg_ref" EXPECTED_BASE_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$pg_ref")" \
       GO_BUILDER_IMAGE="$builder" EXPECTED_GO_BUILDER_ID="$(docker image inspect --format '{{.Id}}' "$builder")" \
-      EXPECTED_POSTGRES_VERSION="$version" CANDIDATE_IMAGE="$tag" scripts/build-postgres-security-image.sh
+      EXPECTED_GO_VERSION="$go_version" EXPECTED_POSTGRES_VERSION="$version" CANDIDATE_IMAGE="$tag" scripts/build-postgres-security-image.sh
     ;;
   *) echo "Unknown public component: $component" >&2; exit 2 ;;
 esac
-scripts/scan-security-candidate.sh "$tag" "$output"
+scripts/scan-security-candidate.sh "$tag" "$output" gobinary

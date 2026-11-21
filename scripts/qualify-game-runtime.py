@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT / "images" / "game-security"
@@ -198,8 +199,8 @@ def evidence_record(path: pathlib.Path) -> dict:
     return {"path": str(path.relative_to(ROOT)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
-def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path) -> dict:
-    if os.uname().nodename != "kspls0":
+def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path, fresh: bool = False) -> dict:
+    if not fresh and os.uname().nodename != "kspls0":
         raise ValueError("qualification must run on kspls0 where the Steam vendor image is loaded")
     tag = env_value(env_file, "DUNE_IMAGE_TAG")
     if not re.fullmatch(r"[0-9]+-[0-9]+-shipping", tag):
@@ -207,8 +208,11 @@ def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path) -> dict:
     vendor_image = f"registry.funcom.com/funcom/self-hosting/seabass-server:{tag}"
     vendor = image_inspect(vendor_image)
     vendor_id = vendor["Id"]
-    candidate_image = f"snape/dune-server:qualified-{tag}-{vendor_id[7:19]}"
-    output_dir = ROOT / "backups" / "admin-panel" / "runtime-security-auto" / f"auto-{tag}-{vendor_id[7:19]}"
+    build_key = f"{tag}-{vendor_id[7:19]}"
+    if fresh:
+        build_key += f"-{uuid.uuid4().hex}"
+    candidate_image = f"snape/dune-server:qualified-{build_key}"
+    output_dir = ROOT / "backups" / "admin-panel" / "runtime-security-auto" / f"auto-{build_key}"
     require_private_directory(output_dir.parent)
     require_private_directory(output_dir)
     require_private_directory(scratch_root)
@@ -233,7 +237,7 @@ def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path) -> dict:
         wheels[0].rename(context / "setuptools.whl")
         shutil.copy2(IMAGE_DIR / "upgrade-embedded-setuptools.py", context)
         shutil.copy2(IMAGE_DIR / "prune-build-packages.sh", context)
-        run("docker", "build", "--pull=false", "--build-arg", f"BASE_IMAGE={vendor_image}",
+        run("docker", "build", "--pull=false", "--no-cache", "--build-arg", f"BASE_IMAGE={vendor_image}",
             "--file", str(IMAGE_DIR / "Dockerfile"), "--tag", candidate_image, str(context))
         candidate = image_inspect(candidate_image)
         candidate_id = candidate["Id"]
@@ -290,13 +294,15 @@ def main() -> None:
     parser.add_argument("env_file", nargs="?", default=".env", type=pathlib.Path)
     parser.add_argument("--scratch-root", type=pathlib.Path,
                         default=pathlib.Path.home() / ".cache" / "dune-runtime-qualification")
+    parser.add_argument("--fresh", action="store_true",
+                        help="stage a new candidate and scan on the local build host, even for a previously qualified vendor image")
     args = parser.parse_args()
     env_file = args.env_file.resolve(strict=True)
     require_private_directory(args.scratch_root)
     with (args.scratch_root / "qualification.lock").open("a+") as lock:
         os.chmod(args.scratch_root / "qualification.lock", 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        result = qualify(env_file, args.scratch_root)
+        result = qualify(env_file, args.scratch_root, args.fresh)
     print(json.dumps(result, sort_keys=True))
 
 
