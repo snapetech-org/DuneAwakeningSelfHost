@@ -7,8 +7,9 @@ restore drill default to `snape/dune-postgres:security-17.12-alpine3.24-gosu1.19
 The image uses the pinned official PostgreSQL 17.12 / Alpine 3.24 AMD64
 base `sha256:005c5c37db96c1e6652a79ea31f9886402fba81ac95dc2db897739121dd7f8f2`,
 rebuilds the bundled `gosu` 1.19 binary with Go 1.27.4 from pinned source, and
-adds Python 3 for the healthcheck. Build it only with
-`scripts/build-postgres-security-image.sh`, then require a zero HIGH/CRITICAL
+adds Python 3 for the healthcheck. The scheduled `postgres` derivative tracks
+the current 17.x patch and refreshes Alpine libraries. The historical recipe is
+`scripts/build-postgres-security-image.sh`. Before changing either pin, require a zero HIGH/CRITICAL
 image scan, an isolated database smoke test, and a current logical dump restore
 before handoff. Primary and standby rollout remains operator-only and must
 preserve the zero-player, fresh verified backup, replication, and rollback gates.
@@ -931,7 +932,9 @@ Rollback means restoring the old image tag and restoring state from the backups 
 
 `admin-panel-ingress` uses the locally qualified
 `snape/dune-admin-caddy:security-2.11.9` image by default. Build it from the
-exact running image with `scripts/build-admin-ingress-security-image.sh`. The
+current source with the `admin-ingress` job in [the derivative workflow](runtime-security-images.md).
+For an OS-only overlay on an already qualified application, use
+`scripts/build-admin-ingress-security-image.sh`. The
 builder applies only Alpine package security updates, requires the Caddy
 application version and commit to remain identical, validates the production
 Caddyfile, and verifies the patched Brotli package. Promotion must scan the

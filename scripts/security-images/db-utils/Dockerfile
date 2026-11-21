@@ -1,8 +1,19 @@
 # Preserve the vendor utility payload and CPython 3.12 ABI. Qualification is
 # required separately; this build does not authorize a production rollout.
 ARG BASE_IMAGE
-FROM ${BASE_IMAGE} AS builder
+FROM ${BASE_IMAGE} AS supported
 USER root
+# The vendor utility images use Alpine 3.21. Keep PostgreSQL 17 and the
+# vendor payload while moving distribution libraries to a supported release.
+RUN case "$(cat /etc/alpine-release)" in \
+        3.21.*) sed -i 's@/v3.21/@/v3.22/@g' /etc/apk/repositories ;; \
+        3.22.*) ;; *) exit 1 ;; esac \
+ && apk upgrade --no-cache --available \
+ && grep -q '^3\.22\.' /etc/alpine-release \
+ && pg_dump --version | grep -E ' 17\.' \
+ && python3 -c 'import psycopg2, ssl'
+
+FROM supported AS builder
 RUN test -f /etc/alpine-release \
  && apk upgrade --no-cache --update-cache \
  && apk add --no-cache build-base linux-headers openssl-dev zlib-dev bzip2-dev \
@@ -19,9 +30,7 @@ RUN curl --fail --show-error --location --retry 3 \
  && make -j2 \
  && make altinstall DESTDIR=/runtime
 
-FROM ${BASE_IMAGE}
-USER root
-RUN test -f /etc/alpine-release && apk upgrade --no-cache --update-cache
+FROM supported
 # COPY merges the standard library without removing vendor site-packages.
 COPY --from=builder /runtime/usr/local/ /usr/local/
 COPY revendor-pip.py /opt/utility-security/revendor-pip.py

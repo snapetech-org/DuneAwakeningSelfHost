@@ -37,8 +37,8 @@ served page. Retain the previous image and recovery evidence.
 
 ### Local vendor images and SteamCMD
 
-Use a Linux AMD64 Docker host with Docker BuildKit, Python 3, jq, tar and Trivy
-0.76.2 on PATH. Load the official vendor images from the operator's Steam
+Use a Linux AMD64 Docker host with Docker BuildKit, Python 3, jq, curl, tar, OpenSSL and Trivy
+0.76.2 on PATH. SteamCMD assessment also uses dpkg for Debian version comparisons. Load the official vendor images from the operator's Steam
 package. Copy `config/security/local-images.example` to an owner-controlled
 inventory and select the actual source for each service. Each row names an
 independent build. `{vendor_tag}` reads `DUNE_IMAGE_TAG` from the chosen env
@@ -70,14 +70,29 @@ protected storage before expiring old staging directories and their unique tags.
 | `game` | Vendor game payload, native libraries and embedded Python compatibility are checked against the exact base. `--fresh` rebuilds even when an earlier approval exists. |
 | `director`, `text-router` | Extract the vendor .NET bundle, replace only managed framework assets from the official Linux musl ASP.NET 10.0 patch image, retain application DLLs and configuration, upgrade Alpine and smoke-test the original entrypoint. The recipe rejects unknown framework layouts and downgrades. Verify FLS, farm registration and actual routing in a canary. |
 | `gateway` | Refresh Alpine packages, enforce the Kerberos and libpq security floors, and import the native PostgreSQL driver. Verify neighbor seeding after a guarded restart. |
-| `db-utils` | Rebuild CPython 3.12.16 from checksummed source, retain vendor site packages, update pip's bundled packaging code and the PostgreSQL 17 server/client libraries. Test the broker, auth shim, DB tools and admin commands before promoting their respective overrides. |
+| `db-utils` | Move the known Alpine 3.21 utility base to 3.22 and rebuild CPython 3.12.16 from checksummed source. Retain vendor site packages, update pip's bundled packaging code and the PostgreSQL 17 libraries. The candidate runs the broker, auth-shim and admin-command suites plus a network-isolated PostgreSQL TLS fixture. |
 | `rabbitmq` | Apply distro fixes on the selected vendor base and verify the original RabbitMQ version. For an operator-side restore proof with both brokers on one exact deployed image, run `scripts/dune-rabbitmq-restore-current-image.py --workspace "$PWD" --project dune_server`. |
 | `steamcmd` | From an already loaded Debian trixie SteamCMD root image, prune unused curl/Kerberos dependencies, refresh selected Debian packages from sid and run `steamcmd.sh +quit` as UID 1000. Set `DUNE_RESTART_STEAMCMD_HELPER_IMAGE` after qualification. |
 
 The November SteamCMD rehearsal recorded **47 raw HIGH findings** and zero
 applicable HIGH findings after review against exact Debian package versions.
-A rebuild retains its own raw report and fails on any HIGH/CRITICAL result.
-The historical assessment applies only to that reviewed image and package set.
+Each rebuild retains its raw report. For the previously reviewed advisories
+it checks each binary package, architecture, epoch and source version inside the
+candidate against Debian's current sid tracker. Only an exact match to the
+current, resolved sid source package with a known fixed version produces an
+OpenVEX statement. The second scan uses the same archive and cached database.
+The candidate keeps the tracker hash, OpenVEX and adjusted report alongside the
+raw report. Any remaining HIGH/CRITICAL finding withholds the checksum receipt.
+A new advisory or an end-of-life OS can therefore block the next candidate.
+For example, the November 21 rebuild matched 47 reviewed Debian package findings
+and held the image for three additional OpenSSL package findings for
+CVE-2026-124709.
+
+Trivy 0.76.2 may identify the original Alpine 3.21 layer in a DB utility image
+after its upgrade. The utility gate checks the installed release package,
+`os-release`, `alpine-release`, repository branch and scanned APK inventory.
+If they agree on 3.22, it scans the same archive with that verified release and
+retains both reports. Both must have zero HIGH/CRITICAL findings.
 
 ## Dune utility PostgreSQL client library update
 

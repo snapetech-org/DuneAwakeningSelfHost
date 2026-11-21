@@ -1255,3 +1255,12 @@ test-backup-verification-view:
 validate: test-compose-file-protocol
 test-compose-file-protocol:
 	python3 scripts/test-compose-file-protocol.py
+
+.PHONY: test-security-image-qualification
+test-security-image-qualification:
+	python3 scripts/test-qualify-game-runtime.py
+	python3 -m unittest discover -s tests -p 'test_postgres_security_image.py'
+	python3 -m unittest discover -s tests -p 'test_dune_rabbitmq_restore_image.py'
+	python3 -m unittest discover -s tests -p 'test_steamcmd_assessment.py'
+
+validate: test-security-image-qualification

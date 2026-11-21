@@ -137,7 +137,7 @@ def check_embedded(image: str, scratch: pathlib.Path) -> None:
 
 def scan_image(image: str, scratch: pathlib.Path) -> tuple[dict, pathlib.Path, str]:
     scanner = image_inspect(TRIVY_IMAGE)
-    if scanner["Id"] != TRIVY_ID:
+    if scanner["Id"] != TRIVY_ID and f"aquasec/trivy@{TRIVY_ID}" not in (scanner.get("RepoDigests") or []):
         raise ValueError("pinned Trivy scanner image is unavailable or changed")
     tar_path = scratch / "candidate-image.tar"
     run("docker", "save", "-o", str(tar_path), image)
@@ -162,7 +162,7 @@ def scan_image(image: str, scratch: pathlib.Path) -> tuple[dict, pathlib.Path, s
     cache.mkdir(parents=True, exist_ok=True)
     run("docker", "run", "--rm", "--network", "host", "--user", f"{os.getuid()}:{os.getgid()}",
         "-e", "HOME=/tmp", "-e", "TRIVY_CACHE_DIR=/cache", "-v", f"{scratch}:/work:ro",
-        "-v", f"{cache}:/cache", TRIVY_IMAGE, "image", "--input", "/work/candidate-image.tar",
+        "-v", f"{cache}:/cache", scanner["Id"], "image", "--input", "/work/candidate-image.tar",
         "--scanners", "vuln", "--pkg-types", "os,library", "--severity", "HIGH,CRITICAL",
         "--format", "json", "--timeout", "30m", output=report_path)
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -244,15 +244,21 @@ def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path, fresh: bool = Fa
         check_config(vendor, candidate)
         vendor_tar = scratch / "vendor-rootfs.tar"
         candidate_tar = scratch / "candidate-rootfs.tar"
-        export_image(vendor_image, vendor_tar)
-        export_image(candidate_image, candidate_tar)
+        export_image(vendor_id, vendor_tar)
+        export_image(candidate_id, candidate_tar)
         files_checked, changed_files = compare_payload(vendor_tar, candidate_tar)
         vendor_tar.unlink()
         candidate_tar.unlink()
         check_native(candidate_image)
         check_embedded(candidate_image, scratch)
         report, report_path, scan_config_id = scan_image(candidate_image, scratch)
-        check_scan(report, scan_config_id)
+        try:
+            check_scan(report, scan_config_id)
+        except ValueError:
+            rejected = output_dir / "rejected-scan.json"
+            shutil.copyfile(report_path, rejected)
+            rejected.chmod(0o600)
+            raise
         if image_inspect(vendor_image)["Id"] != vendor_id:
             raise ValueError("vendor image changed during qualification")
         if report_path.stat().st_size > 8 * 1024 * 1024:
@@ -283,7 +289,7 @@ def qualify(env_file: pathlib.Path, scratch_root: pathlib.Path, fresh: bool = Fa
         settings = {"DUNE_IMAGE_TAG": tag, "DUNE_GAME_IMAGE": candidate_image,
                     "DUNE_RUNTIME_SECURITY_APPROVAL_FILE": str(approval_path.relative_to(ROOT))}
         verified = runtime_security.configuration(ROOT, settings)
-        runtime_security.verify_loaded_images(verified, candidate_id, vendor_id)
+        runtime_security.verify_loaded_images(verified, image_inspect(candidate_image)["Id"], image_inspect(vendor_image)["Id"])
         return {"vendorTag": tag, "vendorImageId": vendor_id, "image": candidate_image,
                 "imageId": candidate_id, "approvalFile": str(approval_path.relative_to(ROOT)),
                 "filesChecked": files_checked, "changedFiles": changed_files}

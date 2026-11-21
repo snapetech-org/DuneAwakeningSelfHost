@@ -9,7 +9,8 @@ umask 077
 mkdir "$output"
 docker image inspect "$base" | jq -e '
   .[0] | select(.Os == "linux" and .Architecture == "amd64") |
-  {id:.Id, layers:.RootFS.Layers, workingDir:.Config.WorkingDir, entrypoint:.Config.Entrypoint}
+  {id:.Id, layers:.RootFS.Layers, workingDir:.Config.WorkingDir, entrypoint:.Config.Entrypoint,
+   cmd:.Config.Cmd, user:(.Config.User // "")}
 ' > "$output/base.json"
 id=$(jq -er .id "$output/base.json")
 run_id=$(cat /proc/sys/kernel/random/uuid)
@@ -55,13 +56,17 @@ esac
 tag="snape/$namespace:security-$run_id"
 docker build --no-cache --pull=false "${args[@]}" -t "$tag" "$ctx"
 image=$(docker image inspect --format '{{.Id}}' "$tag")
+printf '%s %s\n' "$image" "$tag" > "$output/build-image.txt"
 docker image inspect "$image" | jq -e --slurpfile base "$output/base.json" '
+  def user: if . == null or . == "" or . == "0" then "root" else . end;
   .[0] | .RootFS.Layers as $layers | $base[0].layers as $source |
   ($source | length) > 0 and $layers[:($source | length)] == $source and
-  .Config.Entrypoint == $base[0].entrypoint and .Config.WorkingDir == $base[0].workingDir
+  .Config.Entrypoint == $base[0].entrypoint and .Config.WorkingDir == $base[0].workingDir and
+  .Config.Cmd == $base[0].cmd and (.Config.User | user) == ($base[0].user | user)
 ' >/dev/null
 case "$component" in
   director|text-router) docker run --rm --network none "$image" --version ;;
+  db-utils) scripts/security-images/db-utils/check-candidate.sh "$image" ;;
   steamcmd) timeout 180 docker run --rm --user 1000:1001 --entrypoint /home/steam/steamcmd/steamcmd.sh "$image" +quit ;;
 esac
-scripts/scan-security-candidate.sh "$tag" "$output" "$required"
+scripts/scan-security-candidate.sh "$tag" "$output" "$required" "$component"

@@ -4,6 +4,7 @@ USER root
 RUN . /etc/os-release && test "$ID:$VERSION_CODENAME" = debian:trixie \
  && test -x /home/steam/steamcmd/steamcmd.sh \
  && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get purge -y curl libcurl4t64 \
  && DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y \
  && printf 'deb https://deb.debian.org/debian sid main\n' >/etc/apt/sources.list.d/dune-security.list \

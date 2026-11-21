@@ -340,8 +340,10 @@ The same Trivy database found 9 CRITICAL / 150 HIGH in the base and 0 CRITICAL
 / 51 HIGH in the overlay, with no new HIGH/CRITICAL identities; the remaining
 51 have no listed fixed Debian package. SteamCMD payload hashes were identical,
 and an isolated, credential-free online `+quit` smoke test completed. The
-private env selects this overlay via `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`; the
-upstream default remains for installations without the qualified local image.
+November 17 qualification superseded that overlay with a pruned Debian
+derivative and an exact-package assessment. Build and scan a current candidate
+using the [local security inventory](runtime-security-images.md), then use
+`DUNE_RESTART_STEAMCMD_HELPER_IMAGE` to select its approved ID.
 An upstream base refresh requires a new exact-image build, scan, and smoke
 check before changing the protected pin.
 
