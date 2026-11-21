@@ -259,6 +259,22 @@ def _bounded_host_config(host, role, uid, gid):
     return True
 
 
+def approved_restore_image(role: str, image: str) -> bool:
+    if not isinstance(image, str):
+        return False
+    if role == "pg":
+        if image in PG_IMAGES:
+            return True
+        key = "DUNE_BROKER_POSTGRES_DRILL_IMAGE_ID"
+    elif role == "rabbitmq":
+        if RMQ_IMAGE_RE.fullmatch(image):
+            return True
+        key = "DUNE_BROKER_RABBITMQ_DRILL_IMAGE_ID"
+    else:
+        return False
+    return bool(re.fullmatch(r"sha256:[0-9a-f]{64}", image)) and image == os.environ.get(key)
+
+
 def validate_restore_create(name: str, spec: dict) -> str | None:
     """Return the safe restore profile, or None if the body exceeds policy."""
     if not isinstance(spec, dict):
@@ -267,7 +283,7 @@ def validate_restore_create(name: str, spec: dict) -> str | None:
     if labels == {DRILL_LABELS["pg"][0]: "true"}:
         role = "pg"
         allowed_top = {"Image", "User", "Env", "Labels", "StopTimeout", "HostConfig"}
-        if not PG_NAME_RE.fullmatch(name) or spec.get("Image") not in PG_IMAGES:
+        if not PG_NAME_RE.fullmatch(name) or not approved_restore_image(role, spec.get("Image")):
             return None
         expected_env = {
             "POSTGRES_DB": "drill", "POSTGRES_USER": "dune",
@@ -276,7 +292,7 @@ def validate_restore_create(name: str, spec: dict) -> str | None:
     elif labels == {DRILL_LABELS["rabbitmq"][0]: "true"}:
         role = "rabbitmq"
         allowed_top = {"Image", "Hostname", "User", "Env", "Labels", "StopTimeout", "HostConfig"}
-        if not RMQ_NAME_RE.fullmatch(name) or not RMQ_IMAGE_RE.fullmatch(str(spec.get("Image") or "")):
+        if not RMQ_NAME_RE.fullmatch(name) or not approved_restore_image(role, spec.get("Image")):
             return None
         hostname = str(spec.get("Hostname") or "")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", hostname):
@@ -310,11 +326,11 @@ def safe_drill_role(inspected: dict) -> str | None:
     labels = config.get("Labels") or {}
     if labels.get(DRILL_LABELS["pg"][0]) == "true":
         role = "pg"
-        if config.get("Image") not in PG_IMAGES:
+        if not approved_restore_image(role, config.get("Image")):
             return None
     elif labels.get(DRILL_LABELS["rabbitmq"][0]) == "true":
         role = "rabbitmq"
-        if not RMQ_IMAGE_RE.fullmatch(str(config.get("Image") or "")):
+        if not approved_restore_image(role, config.get("Image")):
             return None
     else:
         return None

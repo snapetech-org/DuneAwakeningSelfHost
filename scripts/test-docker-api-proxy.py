@@ -58,6 +58,18 @@ class DockerApiProxyPolicyTests(unittest.TestCase):
         )
         self.assertIsNone(proxy.validate_restore_create("dash-restore-drill-a1b2c3d4e5f6", spec))
 
+    def test_derivative_restore_approval_is_immutable_and_role_specific(self):
+        postgres = "sha256:" + "a" * 64
+        rabbit = "sha256:" + "b" * 64
+        with patch.dict(proxy.os.environ, {"DUNE_BROKER_POSTGRES_DRILL_IMAGE_ID": postgres,
+                                           "DUNE_BROKER_RABBITMQ_DRILL_IMAGE_ID": rabbit}):
+            self.assertTrue(proxy.approved_restore_image("pg", postgres))
+            self.assertTrue(proxy.approved_restore_image("rabbitmq", rabbit))
+            self.assertFalse(proxy.approved_restore_image("pg", rabbit))
+            self.assertFalse(proxy.approved_restore_image("rabbitmq", postgres))
+        with patch.dict(proxy.os.environ, {"DUNE_BROKER_POSTGRES_DRILL_IMAGE_ID": "image:latest"}):
+            self.assertFalse(proxy.approved_restore_image("pg", "image:latest"))
+
     def test_rejects_privileged_or_host_network_restore_profile(self):
         source = self._file("restore-drill/.source-dump")
         passwd = self._file("restore-drill/.passwd-test")

@@ -74,6 +74,22 @@ protected storage before expiring old staging directories and their unique tags.
 | `rabbitmq` | Apply distro fixes on the selected vendor base and verify the original RabbitMQ version. For an operator-side restore proof with both brokers on one exact deployed image, run `scripts/dune-rabbitmq-restore-current-image.py --workspace "$PWD" --project dune_server`. |
 | `steamcmd` | From an already loaded Debian trixie SteamCMD root image, prune unused curl/Kerberos dependencies, refresh selected Debian packages from sid and run `steamcmd.sh +quit` as UID 1000. Set `DUNE_RESTART_STEAMCMD_HELPER_IMAGE` after qualification. |
 
+After qualification, set `DUNE_DB_UTILS_SECURITY_IMAGE` for the DB utilities
+and `DUNE_ADMIN_CHAT_SECURITY_IMAGE` for the separately versioned chat image.
+Set `DUNE_RABBITMQ_SECURITY_IMAGE` for both brokers. For brokered restore
+drills using a new derivative, set the drill reference and its independent
+broker approval to the same loaded SHA-256 image ID:
+
+| Drill reference | Operator-controlled broker approval |
+| --- | --- |
+| `DUNE_RESTORE_DRILL_IMAGE` | `DUNE_BROKER_POSTGRES_DRILL_IMAGE_ID` |
+| `DUNE_RABBITMQ_RESTORE_DRILL_IMAGE` | `DUNE_BROKER_RABBITMQ_DRILL_IMAGE_ID` |
+
+Deploy those pins through the guarded control-plane procedure so Admin and its
+broker receive the reviewed configuration. Keep each role's previous pin for
+rollback. The broker checks both new-container requests and existing drill
+containers against the role-specific approval.
+
 The November SteamCMD rehearsal recorded **47 raw HIGH findings** and zero
 applicable HIGH findings after review against exact Debian package versions.
 Each rebuild retains its raw report. For the previously reviewed advisories
