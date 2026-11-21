@@ -1,0 +1,62 @@
+name: Rebuild security derivatives
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/security-derivatives.yml
+      - scripts/build-*-security*.sh
+      - scripts/scan-security-candidate.sh
+      - scripts/security-images/**
+      - images/postgres-security/Dockerfile
+      - config/admin-ingress.Caddyfile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-derivatives-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [postgres, admin-ingress, prometheus, node-exporter, postgres-exporter, cadvisor]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v0.76.2
+          token: ${{ github.token }}
+      - name: Build, smoke-test and scan
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: scripts/build-public-security-image.sh "$COMPONENT" "$RUNNER_TEMP/candidate"
+      - name: Retain build identity and scan evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: evidence-${{ matrix.component }}
+          path: |
+            ${{ runner.temp }}/candidate/candidate.id
+            ${{ runner.temp }}/candidate/candidate.tag
+            ${{ runner.temp }}/candidate/build/dependency.patch
+            ${{ runner.temp }}/candidate/scan.json
+            ${{ runner.temp }}/candidate/SHA256SUMS
+          retention-days: 7
+      - name: Retain passing image for operator qualification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: candidate-${{ matrix.component }}
+          path: ${{ runner.temp }}/candidate/candidate.tar
+          if-no-files-found: error
+          retention-days: 2

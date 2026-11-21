@@ -23,7 +23,7 @@ actual_go_builder_id="$(docker image inspect "$go_builder_image" --format '{{.Id
   exit 1
 }
 
-DOCKER_BUILDKIT=0 docker build --platform linux/amd64 \
+docker build --no-cache --platform linux/amd64 \
   --build-arg "BASE_IMAGE=$base_image" \
   --build-arg "GO_BUILDER_IMAGE=$go_builder_image" \
   --build-arg "GOSU_COMMIT=$gosu_commit" \
