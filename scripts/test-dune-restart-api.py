@@ -71,13 +71,18 @@ class RestartApiValidationTests(unittest.TestCase):
             "DUNE_AUTOSCALER_DEFAULT_MODE": "dynamic",
         })
         admission.run.return_value = "survival\nheighliner-dungeon\npostgres\n"
-        with mock.patch.object(API.pathlib.Path, "read_text", return_value='{"modes":{"arrakeen":"always-on"}}'):
+        with mock.patch.object(API.pathlib.Path, "read_text",
+                               return_value='{"enabled":true,"modes":{"arrakeen":"always-on"}}'):
             stop = API.farm_restart_services(admission, maps, "stop")
             start = API.farm_restart_services(admission, maps, "start")
         self.assertEqual(stop, ["arrakeen", "heighliner-dungeon", "survival", "director",
                                 "gateway", "text-router", "rmq-auth-shim"])
         self.assertEqual(start, ["rmq-auth-shim", "text-router", "gateway", "director",
                                  "arrakeen", "survival"])
+        with mock.patch.object(API.pathlib.Path, "read_text",
+                               return_value='{"enabled":false,"modes":{"arrakeen":"dynamic"}}'):
+            self.assertEqual(set(API.farm_restart_services(admission, maps, "start")),
+                             maps | API.host_service_control.CONTROL)
 
     def test_build_check_is_read_only_and_farm_scoped(self):
             payload = request(target="all", services=[], phase="check-current-build", fastDynamicStart=False)

@@ -317,6 +317,9 @@ def farm_restart_services(admission, maps, action):
     modes = state.get("modes", {}) if isinstance(state, dict) else None
     if not isinstance(modes, dict):
         raise host_service_control.Blocked("autoscaler-map-modes-unavailable")
+    enabled = state.get("enabled", host_service_control.enabled(admission.values.get("DUNE_AUTOSCALER_ENABLED", "false")))
+    if not isinstance(enabled, bool):
+        raise host_service_control.Blocked("autoscaler-map-modes-unavailable")
     core = set(admission.values.get("DUNE_AUTOSCALER_ALWAYS_ON_SERVICES", "survival,overmap").split(","))
     simulation = set(admission.values.get("DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES", "survival").split(","))
     core = {name.strip() for name in core}
@@ -328,8 +331,10 @@ def farm_restart_services(admission, maps, action):
         "docker", "ps", "--filter", f"label=com.docker.compose.project={admission.project}",
         "--format", '{{.Label "com.docker.compose.service"}}',
     ]).splitlines())
-    required = {name for name in maps if name in simulation
-                or modes.get(name, "always-on" if name in core else default) == "always-on"}
+    required = maps
+    if enabled:
+        required = {name for name in maps if name in simulation
+                    or modes.get(name, "always-on" if name in core else default) == "always-on"}
     if not required:
         raise host_service_control.Blocked("required-map-roster-empty")
     selected = required if action == "start" else required | (maps & running)
