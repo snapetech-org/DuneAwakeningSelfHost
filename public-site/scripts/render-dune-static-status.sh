@@ -285,8 +285,8 @@ try:
         text=True,
         stderr=subprocess.DEVNULL,
     )
-except Exception:
-    sys.exit(0)
+except (OSError, subprocess.SubprocessError):
+    ps = ""
 
 now = datetime.datetime.now(datetime.timezone.utc)
 rows = []
@@ -308,40 +308,31 @@ for line in ps.splitlines():
     restart_count += int(detail.get("RestartCount") or 0)
     rows.append((parts[1], started))
 
-if not rows:
+scheduled_maintenance = scheduled_maintenance_state()
+if not rows and not scheduled_maintenance:
     sys.exit(0)
 
-newest = max(started for _, started in rows)
-oldest = min(started for _, started in rows)
-last_restart = int((now - newest).total_seconds())
-oldest_uptime = int((now - oldest).total_seconds())
-scheduled_maintenance = scheduled_maintenance_state()
 core_started = [started for service, started in rows if service in core_services]
-if core_started:
+event_detail = ""
+container_detail = ""
+if rows:
+    newest = max(started for _, started in rows)
+    oldest = min(started for _, started in rows)
     # The oldest always-on map start is the conservative runtime marker for
     # the last full maintenance cycle; job result timestamps include preflight failures.
-    last_maintenance = min(core_started)
-    runtime_age = int((now - last_maintenance).total_seconds())
-    runtime_label = "Since maintenance"
-else:
-    last_maintenance = None
-    runtime_age = last_restart
-    runtime_label = "Since restart"
-runtime_text = f"{fmt(runtime_age)} ago"
-runtime_class = "status-warn" if runtime_age > 36 * 3600 else "status-ok"
-event_detail = (
-    f"<strong>Last maintenance</strong> {html.escape(last_maintenance.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-    if last_maintenance else
-    f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-)
-detail = (
-    f"<strong>Warm maps</strong> {len(rows)}<br>"
-    f"<strong>Map policy</strong> destinations start on demand<br>"
-    f"{event_detail}"
-    f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-    f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}<br>"
-    f"<strong>Container restarts</strong> {restart_count}"
-)
+    last_event = min(core_started) if core_started else newest
+    runtime_age = int((now - last_event).total_seconds())
+    runtime_label = "Since maintenance" if core_started else "Since restart"
+    runtime_text = f"{fmt(runtime_age)} ago"
+    runtime_class = "status-warn" if runtime_age > 36 * 3600 else "status-ok"
+    if core_started:
+        event_detail = f"<strong>Last maintenance</strong> {last_event:%Y-%m-%d %H:%M UTC}<br>"
+    else:
+        event_detail = f"<strong>Most recent restart</strong> {last_event:%Y-%m-%d %H:%M UTC}<br>"
+    container_detail = (
+        f"<strong>Most recent container restart</strong> {newest:%Y-%m-%d %H:%M UTC}<br>"
+        f"<strong>Oldest map uptime</strong> {fmt((now - oldest).total_seconds())}"
+    )
 if scheduled_maintenance:
     run_at, job = scheduled_maintenance
     backup_state = "requested" if job.get("backup") else "not requested"
@@ -371,13 +362,19 @@ if scheduled_maintenance:
         f"<strong>{schedule_label}</strong> {html.escape(run_at.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
         f"<strong>Status</strong> {html.escape(status_label)}<br>"
         f"<strong>Target</strong> {html.escape(str(job.get('targetLabel') or job.get('target') or 'restart'))}<br>"
-        f"<strong>Backup</strong> {html.escape(backup_state)} before restart<br>"
-        f"{event_detail}"
-        f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
-        f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}"
+        f"<strong>Backup</strong> {html.escape(backup_state)} before restart"
     )
-if runtime_age > 36 * 3600:
-    detail += "<br><strong>Schedule</strong> stale"
+    if container_detail:
+        detail += f"<br>{event_detail}{container_detail}"
+else:
+    detail = (
+        f"<strong>Warm maps</strong> {len(rows)}<br>"
+        f"<strong>Map policy</strong> destinations start on demand<br>"
+        f"{event_detail}{container_detail}<br>"
+        f"<strong>Container restarts</strong> {restart_count}"
+    )
+    if runtime_age > 36 * 3600:
+        detail += "<br><strong>Schedule</strong> stale"
 values = {
     "runtime_class": runtime_class,
     "runtime_label": runtime_label,

@@ -175,7 +175,7 @@ if [[ "$restart_target" == "all" && ( "$restart_phase" == "start" || "$restart_p
       }
       partition_ids+=("$partition_id")
     done
-    DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS="$(IFS=,; printf '%s' "${partition_ids[*]}")"
+    DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS="$(printf '%s\n' "${partition_ids[@]}" | paste -sd , -)"
     export DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS
   else
     map_services_output="$("$map_catalog_script" "$env_file" --field services --write-cache)" || {

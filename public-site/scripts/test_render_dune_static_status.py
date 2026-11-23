@@ -13,7 +13,7 @@ SCRIPT = pathlib.Path(__file__).with_name("render-dune-static-status.sh")
 
 
 class StaticStatusRenderTest(unittest.TestCase):
-    def render_status(self, restart_state, status_lines=None):
+    def render_status(self, restart_state, status_lines=None, map_age_days=0, maps_running=True):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             dune_root = root / "dune"
@@ -58,13 +58,15 @@ class StaticStatusRenderTest(unittest.TestCase):
                     #!/usr/bin/env python3
                     import datetime
                     import json
+                    import os
                     import sys
                     if sys.argv[1] == "ps":
-                        for service in ("survival", "deep-desert", "deep-desert-pvp"):
+                        for service in os.environ["TEST_RUNNING_MAPS"].split():
                             print(f"id-{service}\\t{service}")
                     elif sys.argv[1] == "inspect":
+                        started = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(os.environ["TEST_MAP_AGE_DAYS"]))
                         print(json.dumps([{
-                            "State": {"Status": "running", "StartedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()},
+                            "State": {"Status": "running", "StartedAt": started.isoformat()},
                             "RestartCount": 0,
                         }]))
                     else:
@@ -85,6 +87,8 @@ class StaticStatusRenderTest(unittest.TestCase):
                 "CONFIGURE_SCRIPT": str(root / "missing-configure.sh"),
                 "DRIFT_CHECK_SCRIPT": str(root / "missing-drift.sh"),
                 "DUNE_PUBLIC_RESTART_STATE_FILE": str(restart_state_file),
+                "TEST_MAP_AGE_DAYS": str(map_age_days),
+                "TEST_RUNNING_MAPS": "survival deep-desert deep-desert-pvp" if maps_running else "",
             }
             subprocess.run([str(SCRIPT)], env=env, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return status_file.read_text(encoding="utf-8")
@@ -353,7 +357,7 @@ class StaticStatusRenderTest(unittest.TestCase):
                     "runAt": time.time() + 3600,
                 },
             ]
-        })
+        }, map_age_days=8)
 
         self.assertIn("Maintenance scheduled", html)
         self.assertIn("<strong>Next maintenance</strong>", html)
@@ -361,6 +365,20 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("<strong>Last maintenance</strong>", html)
         self.assertNotIn("<strong>Last result</strong> failed", html)
         self.assertNotIn("<strong>Schedule</strong> stale", html)
+
+    def test_in_progress_maintenance_is_visible_with_all_maps_stopped(self):
+        html = self.render_status({
+            "jobs": [{
+                "status": "executing",
+                "action": "restart",
+                "execute": True,
+                "target": "all",
+                "runAt": time.time() - 60,
+            }]
+        }, maps_running=False)
+
+        self.assertIn("Maintenance in progress", html)
+        self.assertIn("<strong>Status</strong> executing", html)
 
     def test_overdue_maintenance_is_visible_instead_of_old_failure(self):
         html = self.render_status({
