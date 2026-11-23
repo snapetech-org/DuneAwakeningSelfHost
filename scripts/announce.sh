@@ -165,7 +165,7 @@ if not routing_keys:
     print("missing DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", file=sys.stderr)
     sys.exit(64)
 
-credentials = base64.b64encode(f"{sender_user}:{sender_password}".encode()).decode()
+credentials = base64.b64encode(f"{management_user}:{management_password}".encode()).decode()
 headers = {
     "Authorization": f"Basic {credentials}",
     "Content-Type": "application/json",
@@ -511,15 +511,26 @@ def publish_with_amqp():
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=amqp_host,
-        port=amqp_port,
-        virtual_host="/",
-        credentials=pika.PlainCredentials(sender_user, sender_password),
-        ssl_options=pika.SSLOptions(context, amqp_host) if amqp_tls else None,
-        heartbeat=0,
-        blocked_connection_timeout=10,
-    ))
+    endpoints = [(amqp_host, amqp_port)]
+    if urllib.parse.urlsplit(rmq_url).hostname == "game-rmq" and amqp_host != "game-rmq":
+        endpoints.append(("game-rmq", 5672))
+    for host, port in endpoints:
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=host,
+                port=port,
+                virtual_host="/",
+                credentials=pika.PlainCredentials(sender_user, sender_password),
+                ssl_options=pika.SSLOptions(context, host) if amqp_tls else None,
+                socket_timeout=4,
+                stack_timeout=8,
+                heartbeat=0,
+                blocked_connection_timeout=10,
+            ))
+            break
+        except (pika.exceptions.AMQPConnectionError, OSError):
+            if (host, port) == endpoints[-1]:
+                raise
     channel = connection.channel()
     amqp_results = []
     try:

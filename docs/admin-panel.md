@@ -1356,7 +1356,10 @@ DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 The stable transport is:
 
 1. The hook binds currently online player queues to the configured `chat.map` routing keys.
-2. The hook publishes a `TextChat` payload with bundled `pika`, matching the AMQP property encoding used by real player chat.
+   The RabbitMQ management requests use the configured management account.
+2. The hook publishes a `TextChat` payload with bundled `pika` using the chat sender account.
+   When the management URL points to the Compose `game-rmq` service, a failed AMQP
+   connection to the configured endpoint falls back to that service's internal listener.
 3. Paul-origin messages are wrapped as `!!! message !!!` before delivery. Direct/manual hook invocations with `DUNE_ANNOUNCE_JOB_ID=manual` are not wrapped.
 
 Default announcement transport settings:
