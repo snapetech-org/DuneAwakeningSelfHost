@@ -77,7 +77,7 @@ install_rendered() {
     dune-lan-reflection.service)
       sed \
         -e "s#^WorkingDirectory=.*#WorkingDirectory=$repo_root#" \
-        -e "s#^ExecStart=.*#ExecStart=$repo_root/scripts/setup-lan-reflection.sh $env_path#" \
+        -e "s#^ExecStart=.*#ExecStart=$repo_root/scripts/setup-lan-reflection.sh $env_path --seed-changed-neighbors#" \
         "$repo_root/config/systemd/$template" > "$tmp"
       ;;
     *)

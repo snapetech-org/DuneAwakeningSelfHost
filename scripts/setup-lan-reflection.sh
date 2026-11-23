@@ -2,6 +2,11 @@
 set -euo pipefail
 
 env_file="${1:-.env}"
+seed_changed_neighbors="${2:-}"
+if [[ -n "$seed_changed_neighbors" && "$seed_changed_neighbors" != --seed-changed-neighbors ]]; then
+    printf 'unexpected LAN reflection option: %s\n' "$seed_changed_neighbors" >&2
+    exit 2
+fi
 
 read_env() {
     local key="$1" value
@@ -191,3 +196,22 @@ else
 fi
 
 echo "Dune LAN reflection host side is active for ${PUBLIC_IP} on ${LAN_IFACE}; local self-host redirects cover tcp/${GAME_RMQ_PUBLIC_PORT}, udp/${GAME_UDP_PORT_RANGE}, and udp/${IGW_UDP_PORT_RANGE}"
+
+if [[ "$seed_changed_neighbors" == --seed-changed-neighbors ]]; then
+    # The native service can enter the game network namespaces. Restart
+    # requests from the constrained API do not inherit this privilege.
+    script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    project="${COMPOSE_PROJECT_NAME:-$(read_env COMPOSE_PROJECT_NAME)}"
+    project="${project:-dune_server}"
+    state_file="${RUNTIME_DIRECTORY:?missing LAN reflection runtime directory}/neighbors"
+    running="$(docker ps -q --no-trunc --filter "label=com.docker.compose.project=$project")"
+    if [[ -n "$running" ]]; then
+        mapfile -t containers <<< "$running"
+        topology="$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "${containers[@]}" | LC_ALL=C sort)"
+        if [[ ! -r "$state_file" || "$topology" != "$(cat "$state_file")" ]]; then
+            COMPOSE_PROJECT_NAME="$project" "$script_dir/seed-gateway-neighbor.sh"
+            COMPOSE_PROJECT_NAME="$project" "$script_dir/refresh-map-neighbors.sh" --all
+            printf '%s\n' "$topology" > "$state_file"
+        fi
+    fi
+fi

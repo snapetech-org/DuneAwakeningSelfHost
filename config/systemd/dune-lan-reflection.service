@@ -6,7 +6,10 @@ Wants=network-online.target docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/DuneAwakeningSelfHost
-ExecStart=/opt/DuneAwakeningSelfHost/scripts/setup-lan-reflection.sh
+RuntimeDirectory=dune-lan-reflection
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/setup-lan-reflection.sh /opt/DuneAwakeningSelfHost/.env --seed-changed-neighbors
 
 [Install]
 WantedBy=multi-user.target

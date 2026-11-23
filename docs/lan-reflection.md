@@ -73,7 +73,8 @@ sudo ./scripts/setup-lan-reflection.sh
 
 For persistence, install the rendered service and timer from the active
 checkout. The timer re-runs the idempotent repair after firewall reloads or
-Docker network changes:
+Docker network changes. The host service also reseeds bridge and map neighbors
+when running Dune containers change or restart, including after maintenance:
 
 ```bash
 test "$(hostname)" = kspls0
