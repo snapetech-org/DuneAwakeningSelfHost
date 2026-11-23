@@ -37,6 +37,8 @@ The repository now has four bounded layers:
   two consecutive degraded observations before recovering a running map.
   Exited/dead maps and explicit `--once` operations remain immediate.
 - `scripts/director-watchdog.sh` checks Director/Gateway FLS publication.
+  It uses the shared DASH operation lock so it cannot recover services during
+  a deliberately stopped maintenance or backup window.
   Three failed checks trigger `scripts/recover-publication.sh`, which uses
   `scripts/restart-target.sh publication` and the normal post-start hooks.
 - `dune-lan-reflection.timer` reruns the idempotent host network repair every

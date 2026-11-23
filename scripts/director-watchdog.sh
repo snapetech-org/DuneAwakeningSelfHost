@@ -46,6 +46,8 @@ rmq="$(setting DUNE_DIRECTOR_RMQ_CONTAINER)"
 rmq="${rmq:-dune_server-game-rmq-1}"
 lock_file="$(setting DUNE_DIRECTOR_WATCHDOG_LOCK_FILE)"
 lock_file="${lock_file:-/tmp/dune-director-watchdog.lock}"
+operation_lock="$(setting DUNE_OPERATION_LOCK_FILE)"
+operation_lock="${operation_lock:-$script_dir/../backups/admin-panel/operation.lock}"
 runtime="$(printenv CONTAINER_RUNTIME 2>/dev/null || printf docker)"
 
 # Child health probes run repeatedly. Resolve only their non-secret settings
@@ -73,10 +75,10 @@ if [[ ! "$interval" =~ ^[1-9][0-9]*$ || ! "$publication_interval" =~ ^[1-9][0-9]
   exit 2
 fi
 
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$lock_file"
-  flock -n 9 || exit 0
-fi
+mkdir -p "$(dirname "$operation_lock")"
+exec 9>"$lock_file"
+flock -n 9 || exit 0
+exec 8>>"$operation_lock"
 
 purge_login_queue() {
   "$runtime" exec "$rmq" rabbitmqctl purge_queue loginRequests >/dev/null 2>&1 || true
@@ -168,6 +170,10 @@ check_publication() {
 }
 
 while :; do
+  if ! flock -n 8; then
+    sleep "$interval"
+    continue
+  fi
   now="$(date +%s)"
   state="$("$runtime" inspect -f '{{.State.Status}}' "$director" 2>/dev/null || printf missing)"
   if [[ "$state" != running ]]; then
@@ -178,5 +184,6 @@ while :; do
   else
     check_publication "$now" || true
   fi
+  flock -u 8
   sleep "$interval"
 done
