@@ -27,15 +27,20 @@ class RestartPostStartHealthTests(unittest.TestCase):
         self.write_executable("compose-files.sh", "#!/bin/sh\nprintf 'compose.yaml\\n'\n")
         self.write_executable(
             "map_catalog.py",
-            "#!/bin/sh\nprintf 'survival overmap\\n'\n",
+            "#!/bin/sh\ncase \"$3\" in\n"
+            "  map-partitions) printf 'survival:1\\novermap:2\\n' ;;\n"
+            "  *) printf 'survival overmap\\n' ;;\nesac\n",
         )
         self.write_executable(
             "status.sh",
             """#!/bin/sh
 printf 'current_ready_alive=%s current_alive_active=%s active_servers=%s partitions=2 game_sg_connections=%s admin_sg_connections=2\\n' \\
   "${TEST_FARM_READY:-2}" "${TEST_FARM_READY:-2}" "${TEST_FARM_READY:-2}" "${TEST_FARM_READY:-2}"
-printf 'core_ready_alive=%s core_alive_active=%s core_active_servers=%s core_partitions=2\\n' \\
-  "${TEST_CORE_READY:-2}" "${TEST_CORE_READY:-2}" "${TEST_CORE_READY:-2}"
+core_total=2
+[ "${DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS:-}" != 1 ] || core_total=1
+core_ready="${TEST_CORE_READY:-$core_total}"
+printf 'core_ready_alive=%s core_alive_active=%s core_active_servers=%s core_partitions=%s\\n' \\
+  "$core_ready" "$core_ready" "$core_ready" "$core_total"
 """,
         )
         self.write_executable("verify-rmq-auth-path.sh", "#!/bin/sh\nexit 0\n")
@@ -112,6 +117,12 @@ printf 'core_ready_alive=%s core_alive_active=%s core_active_servers=%s core_par
         result = self.run_health(TEST_FARM_READY="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.marker.exists())
+
+    def test_approved_maintenance_accepts_sleeping_on_demand_maps(self):
+        self.running_services.write_text("survival\n", encoding="utf-8")
+        result = self.run_health(DUNE_RESTART_REQUIRED_MAP_SERVICES="survival", TEST_FARM_READY="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
 
 
 if __name__ == "__main__":

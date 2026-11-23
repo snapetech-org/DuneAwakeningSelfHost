@@ -321,13 +321,17 @@ def farm_restart_services(admission, maps, action):
     simulation = set(admission.values.get("DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES", "survival").split(","))
     core = {name.strip() for name in core}
     simulation = {name.strip() for name in simulation}
-    default = admission.values.get("DUNE_AUTOSCALER_DEFAULT_MODE", "always-on")
+    default = admission.values.get("DUNE_AUTOSCALER_DEFAULT_MODE", "always-on").strip().lower()
+    if default not in {"always-on", "dynamic", "disabled"}:
+        default = "always-on"
     running = set(admission.run([
         "docker", "ps", "--filter", f"label=com.docker.compose.project={admission.project}",
         "--format", '{{.Label "com.docker.compose.service"}}',
     ]).splitlines())
     required = {name for name in maps if name in simulation
                 or modes.get(name, "always-on" if name in core else default) == "always-on"}
+    if not required:
+        raise host_service_control.Blocked("required-map-roster-empty")
     selected = required if action == "start" else required | (maps & running)
     controls = ["rmq-auth-shim", "text-router", "gateway", "director"]
     return sorted(selected) + controls[::-1] if action == "stop" else controls + sorted(selected)
@@ -355,8 +359,16 @@ def execute_restart(request: dict) -> dict:
                     "durationMs": int((time.monotonic() - started) * 1000)}
         environment = admission.approved_environment(restart_environment(request))
         action = "stop" if request["phase"] in {"stop", "shutdown"} else request["phase"]
-        services = (farm_restart_services(admission, configured_map_services(), action)
-                    if request["target"] == "all" else request["services"])
+        services = request["services"]
+        if request["target"] == "all":
+            roster = admission.run([str(ROOT / "scripts/map_catalog.py"), environment["ENV_FILE"],
+                                    "--field", "services"], env=environment).split()
+            if not roster or any(not SERVICE_RE.fullmatch(service) for service in roster):
+                raise host_service_control.Blocked("approved-map-roster-unavailable")
+            services = farm_restart_services(admission, set(roster), action)
+            environment["DUNE_RESTART_REQUIRED_MAP_SERVICES"] = " ".join(
+                service for service in services if service in roster
+            )
         # Admit the entire batch before touching any existing container. New
         # containers and image/configuration changes require the native installer.
         for service in services:

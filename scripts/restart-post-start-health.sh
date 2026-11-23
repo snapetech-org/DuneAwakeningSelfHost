@@ -19,6 +19,7 @@ verify_script="${DUNE_VERIFY_RMQ_AUTH_PATH_SCRIPT:-./scripts/verify-rmq-auth-pat
 timeout="${DUNE_RESTART_POST_START_TIMEOUT_SECONDS:-180}"
 stability_seconds=0
 all_map_services=()
+required_map_services="${DUNE_RESTART_REQUIRED_MAP_SERVICES:-}"
 if [[ "$restart_target" == "all" && ( "$restart_phase" == "start" || "$restart_phase" == "restart" ) ]]; then
   timeout="${DUNE_RESTART_POST_START_TIMEOUT_SECONDS:-900}"
   stability_seconds="${DUNE_RESTART_POST_START_STABILITY_SECONDS:-120}"
@@ -138,6 +139,12 @@ full_farm_ready() {
   read -r current_ready current_alive active_servers partitions game_connections admin_connections <<< "$current_line"
   read -r core_ready core_alive core_active core_total <<< "$core_line"
   map_total="${#all_map_services[@]}"
+  if [[ -n "$required_map_services" ]]; then
+    [[ "$core_total" == "$map_total" && "$core_ready" == "$map_total" \
+      && "$core_alive" == "$map_total" && "$core_active" == "$map_total" \
+      && "$game_connections" -ge "$map_total" ]]
+    return
+  fi
   [[ "$map_total" =~ ^[1-9][0-9]*$ && "$partitions" == "$map_total" \
     && "$current_ready" == "$map_total" && "$current_alive" == "$map_total" \
     && "$active_servers" == "$map_total" && "$game_connections" -ge "$map_total" \
@@ -156,11 +163,27 @@ if [[ "$restart_target" == "all" && ( "$restart_phase" == "start" || "$restart_p
     printf 'full-farm start requires scripts/map_catalog.py to verify all map workers\n' >&2
     exit 1
   fi
-  map_services_output="$("$map_catalog_script" "$env_file" --field services --write-cache)" || {
-    printf 'full-farm start could not read the active map-service roster\n' >&2
-    exit 1
-  }
-  read -r -a all_map_services <<< "$map_services_output"
+  if [[ -n "$required_map_services" ]]; then
+    read -r -a all_map_services <<< "$required_map_services"
+    map_partitions="$("$map_catalog_script" "$env_file" --field map-partitions)"
+    partition_ids=()
+    for service in "${all_map_services[@]}"; do
+      partition_id="$(awk -F: -v service="$service" '$1 == service { print $2 }' <<< "$map_partitions")"
+      [[ "$partition_id" =~ ^[1-9][0-9]*$ ]] || {
+        printf 'full-farm start could not resolve the partition for %s\n' "$service" >&2
+        exit 1
+      }
+      partition_ids+=("$partition_id")
+    done
+    DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS="$(IFS=,; printf '%s' "${partition_ids[*]}")"
+    export DUNE_PUBLIC_STATUS_CORE_PARTITION_IDS
+  else
+    map_services_output="$("$map_catalog_script" "$env_file" --field services --write-cache)" || {
+      printf 'full-farm start could not read the active map-service roster\n' >&2
+      exit 1
+    }
+    read -r -a all_map_services <<< "$map_services_output"
+  fi
   if (( ${#all_map_services[@]} == 0 )); then
     printf 'full-farm start found an empty active map-service roster\n' >&2
     exit 1
@@ -202,6 +225,10 @@ while (( SECONDS < deadline )); do
   seed_neighbors
 
   if ! is_running "$text_router_container"; then
+    if [[ -n "${DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE:-}" ]]; then
+      printf 'approved text-router is not running after start\n' >&2
+      exit 1
+    fi
     printf 'text-router is not running after start; recreating it after postgres readiness\n' >&2
     "${compose_cmd[@]}" up -d --force-recreate --no-deps "$text_router_service"
     text_router_recreated=true
