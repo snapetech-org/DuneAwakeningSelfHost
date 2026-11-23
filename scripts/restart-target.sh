@@ -369,6 +369,10 @@ restart_api_phase=false
 case "$phase" in
   start|stop|restart|shutdown) restart_api_phase=true ;;
 esac
+if [ "$phase" = "update" ] && ! steam_update_enabled; then
+  printf 'Steam update skipped for the current-build restart\n'
+  exit 0
+fi
 if ! command -v docker >/dev/null 2>&1 \
   || { [ -n "${DUNE_RESTART_API_SOCKET:-}" ] \
     && [ -S "$DUNE_RESTART_API_SOCKET" ] \
@@ -386,7 +390,7 @@ import sys
 
 target, services, socket_path, action, phase = sys.argv[1:]
 timeout = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
-service_list = services.split()
+service_list = [] if target == "all" else services.split()
 if target != "all" and not service_list:
     service_list = [target]
 payload = json.dumps({

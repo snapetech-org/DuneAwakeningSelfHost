@@ -308,6 +308,31 @@ def restart_environment(request: dict) -> dict[str, str]:
     return env
 
 
+def farm_restart_services(admission, maps, action):
+    state_path = ROOT / "backups/admin-panel/autoscaler.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        state = {}
+    modes = state.get("modes", {}) if isinstance(state, dict) else None
+    if not isinstance(modes, dict):
+        raise host_service_control.Blocked("autoscaler-map-modes-unavailable")
+    core = set(admission.values.get("DUNE_AUTOSCALER_ALWAYS_ON_SERVICES", "survival,overmap").split(","))
+    simulation = set(admission.values.get("DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES", "survival").split(","))
+    core = {name.strip() for name in core}
+    simulation = {name.strip() for name in simulation}
+    default = admission.values.get("DUNE_AUTOSCALER_DEFAULT_MODE", "always-on")
+    running = set(admission.run([
+        "docker", "ps", "--filter", f"label=com.docker.compose.project={admission.project}",
+        "--format", '{{.Label "com.docker.compose.service"}}',
+    ]).splitlines())
+    required = {name for name in maps if name in simulation
+                or modes.get(name, "always-on" if name in core else default) == "always-on"}
+    selected = required if action == "start" else required | (maps & running)
+    controls = ["rmq-auth-shim", "text-router", "gateway", "director"]
+    return sorted(selected) + controls[::-1] if action == "stop" else controls + sorted(selected)
+
+
 def execute_restart(request: dict) -> dict:
     if not RESTART_SCRIPT.is_file() or not os.access(RESTART_SCRIPT, os.X_OK):
         return {"ok": False, "exitCode": 78, "error": "the trusted host restart script is unavailable", "output": ""}
@@ -316,7 +341,7 @@ def execute_restart(request: dict) -> dict:
     started = time.monotonic()
     try:
         admission = host_service_control.Admission(ROOT, ENV_FILE, os.environ.get("DUNE_RESTART_API_EXPECTED_HOSTNAME", ""))
-        policy = admission.require_policy()
+        admission.require_policy()
         if not admission.expected_hostname or socket.gethostname().split(".")[0] != admission.expected_hostname:
             raise host_service_control.Blocked("host-identity-not-approved")
         if request["phase"] == "check-current-build":
@@ -329,13 +354,13 @@ def execute_restart(request: dict) -> dict:
                     "output": (result.stdout + result.stderr).strip()[-MAX_OUTPUT_CHARS:],
                     "durationMs": int((time.monotonic() - started) * 1000)}
         environment = admission.approved_environment(restart_environment(request))
-        services = ([*sorted(configured_map_services()), *sorted(host_service_control.CONTROL)]
+        action = "stop" if request["phase"] in {"stop", "shutdown"} else request["phase"]
+        services = (farm_restart_services(admission, configured_map_services(), action)
                     if request["target"] == "all" else request["services"])
         # Admit the entire batch before touching any existing container. New
         # containers and image/configuration changes require the native installer.
         for service in services:
             admission.same_image(service)
-        action = "stop" if request["phase"] in {"stop", "shutdown"} else request["phase"]
         if not request["dryRun"] and action in {"start", "restart"}:
             admission.run([str(ROOT / "scripts/validate-landsraad-coriolis-cycle.sh"), environment["ENV_FILE"]], env=environment)
         for service in services:

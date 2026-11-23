@@ -40,6 +40,13 @@ older autoscaler route uses the same fixed existing-container operations and
 approved post-hook configuration, while retaining its map-only request shape.
 Autoscaling cannot provision a missing container through this transport.
 
+Full-farm maintenance resolves its targets on the host. It stops the required
+maps, any running on-demand maps, and restart-safe control services. Startup
+brings back the control services and required maps, with on-demand destinations
+left to the autoscaler. Each selected container must pass the existing
+identity and image checks before the phase begins. A current-build job skips
+the Steam update phase without requiring Docker access from Admin.
+
 The host stores private durable job records outside the Admin workspace.
 `GET /v1/service-control/JOB_ID` reports progress and the outcome without returning
 raw command output or credentials. Reusing an ID returns that operation rather

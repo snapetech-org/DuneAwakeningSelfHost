@@ -65,6 +65,20 @@ class RestartApiValidationTests(unittest.TestCase):
         result = API.validate_request(request(target="all", services=[]), self.maps)
         self.assertEqual(result["target"], "all")
 
+    def test_full_fleet_stops_running_destinations_and_starts_only_required_maps(self):
+        maps = {"survival", "arrakeen", "heighliner-dungeon", "testing-hephaestus"}
+        admission = mock.Mock(project="dune_server", values={
+            "DUNE_AUTOSCALER_DEFAULT_MODE": "dynamic",
+        })
+        admission.run.return_value = "survival\nheighliner-dungeon\npostgres\n"
+        with mock.patch.object(API.pathlib.Path, "read_text", return_value='{"modes":{"arrakeen":"always-on"}}'):
+            stop = API.farm_restart_services(admission, maps, "stop")
+            start = API.farm_restart_services(admission, maps, "start")
+        self.assertEqual(stop, ["arrakeen", "heighliner-dungeon", "survival", "director",
+                                "gateway", "text-router", "rmq-auth-shim"])
+        self.assertEqual(start, ["rmq-auth-shim", "text-router", "gateway", "director",
+                                 "arrakeen", "survival"])
+
     def test_build_check_is_read_only_and_farm_scoped(self):
             payload = request(target="all", services=[], phase="check-current-build", fastDynamicStart=False)
             self.assertEqual(API.validate_request(payload, self.maps)["phase"], "check-current-build")
