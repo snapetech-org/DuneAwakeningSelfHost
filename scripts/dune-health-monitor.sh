@@ -67,6 +67,52 @@ check_timer dune-health-monitor.timer dune-health-monitor.service
 check_timer dune-hotfix-auto-update.timer dune-hotfix-auto-update.service
 check_timer dune-public-ip-monitor.timer dune-public-ip-monitor.service
 check_timer dune-target-safety-audit.timer dune-target-safety-audit.service
+if [[ "$(systemctl show dune-daily-maintenance-schedule.service --property=LoadState --value)" == loaded ]]; then
+  check_timer dune-daily-maintenance-schedule.timer dune-daily-maintenance-schedule.service
+  if systemctl is-active --quiet dune-daily-maintenance-schedule.timer; then
+    maintenance_time="$(awk -F= '$1 == "DUNE_DAILY_RESTART_TIME" { print $2; exit }' "$env_file")"
+    if maintenance_finding="$(python3 - "$repo_root/backups/admin-panel/restart-jobs.json" "${maintenance_time:-06:00}" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+path, maintenance_time = sys.argv[1:]
+hour, minute = map(int, maintenance_time.split(":"))
+now = datetime.datetime.now()
+due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+if now < due + datetime.timedelta(minutes=45):
+    due -= datetime.timedelta(days=1)
+date_key = due.date().isoformat()
+try:
+    state = json.loads(pathlib.Path(path).read_text())
+except FileNotFoundError:
+    state = {}
+jobs = [
+    job for job in state.get("jobs", [])
+    if job.get("automaticDailyMaintenance") and job.get("target") == "all"
+    and job.get("action") == "restart" and job.get("execute") and job.get("backup")
+]
+today = now.date().isoformat()
+for date in sorted({date_key, today}, reverse=True):
+    daily = [job for job in jobs if job.get("automaticDailyMaintenanceKey") == date]
+    if any(job.get("status") == "executed" for job in daily):
+        if date == today:
+            break
+        continue
+    if daily and daily[-1].get("status") == "failed":
+        print("Dune daily maintenance failed for " + date)
+        break
+    if date == date_key:
+        print("Dune daily maintenance has no successful backed-up restart for " + date)
+PY
+)"; then
+      [[ -z "$maintenance_finding" ]] || add_finding "$maintenance_finding"
+    else
+      add_finding "Dune daily maintenance completion evidence is unreadable"
+    fi
+  fi
+fi
 
 if ! systemctl is-active --quiet docker.service; then
   add_finding "docker.service is not active"
@@ -76,6 +122,7 @@ for service in \
   dune-hotfix-auto-update.service \
   dune-public-ip-monitor.service \
   dune-target-safety-audit.service \
+  dune-daily-maintenance-schedule.service \
   dune-map-watchdog.service; do
   load_state="$(systemctl show "$service" --property=LoadState --value 2>/dev/null || true)"
   [[ "$load_state" == "loaded" ]] || continue
@@ -161,14 +208,14 @@ if [[ -n "$current" ]]; then
 
 $current
 
-The Dune health monitor checks the installed Steam build, required game partitions, server-browser publication, and the next scheduled updater/monitor runs. It will send another email if the findings change and a recovery email when they clear."
+The Dune health monitor checks the installed Steam build, required game partitions, server-browser publication, daily maintenance completion, and timer schedules. It will send another email if the findings change and a recovery email when they clear."
   snape_mail_send "$subject" "$body"
   tmp="$(mktemp "$state_dir/.findings.XXXXXX")"
   printf '%s\n' "$current" > "$tmp"
   chmod 0640 "$tmp"
   mv -f "$tmp" "$state_file"
 elif [[ -n "$previous" ]]; then
-  body="Dune server health has recovered. The installed Steam build, required game partitions, server-browser publication, and monitored timer schedules are healthy."
+  body="Dune server health has recovered. The installed Steam build, required game partitions, server-browser publication, daily maintenance, and monitored timer schedules are healthy."
   snape_mail_send '[Dune] Server health recovered' "$body"
   rm -f "$state_file"
 fi

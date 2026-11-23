@@ -355,7 +355,7 @@ def execute_restart(request: dict) -> dict:
             raise host_service_control.Blocked("host-identity-not-approved")
         if request["phase"] == "check-current-build":
             result = subprocess.run(
-                [str(ROOT / "scripts/check-steam-update.sh"), str(ENV_FILE)],
+                [str(ROOT / "scripts/verify-running-image-tag.sh"), str(ENV_FILE), "--loaded-only"],
                 cwd=ROOT, env=restart_environment(request), capture_output=True,
                 text=True, timeout=90, check=False,
             )

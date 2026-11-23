@@ -1,7 +1,8 @@
 [Unit]
 Description=Schedule DASH daily maintenance restart
-After=network-online.target
-Wants=network-online.target
+After=network-online.target docker.service dune-restart-api.socket
+Wants=network-online.target dune-restart-api.socket
+OnFailure=dune-health-monitor.service
 
 [Service]
 Type=oneshot
@@ -14,4 +15,6 @@ WorkingDirectory=/path/to/DuneAwakeningSelfHost
 Environment=DOCKER_CONFIG=/home/keith/.docker
 Environment=DUNE_HOTFIX_UPDATE_LOCK_FILE=/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock
 Environment=DUNE_ENV_FILE=/path/to/DuneAwakeningSelfHost/.env
+Environment=DUNE_DAILY_RESTART_UPDATE_POLICY=current
+Environment=DUNE_DAILY_RESTART_GUARDED=true
 ExecStart=/path/to/DuneAwakeningSelfHost/scripts/schedule-daily-maintenance.sh

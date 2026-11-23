@@ -70,13 +70,11 @@ Install or refresh the monitor and its failure hooks with:
 The public-IP monitor also uses `OnUnitInactiveSec` so its oneshot timer
 schedules the next run after each check completes.
 
-Daily maintenance uses the same trust boundary. The default `certified` policy
-checks readiness before warning players and revalidates the exact staged
-candidate immediately before any disconnect or stop. When no update is staged,
-or a staged candidate lacks a current passing receipt, the useful daily restart
-continues on the currently loaded build without acquiring or ingesting package
-content. Candidate drift therefore cannot turn a scheduled current-build
-restart into an unreviewed update.
+The installed daily timer restarts the approved, currently loaded build.
+Steam staging and certified updates run independently of the daily restart.
+The health monitor checks the timer, scheduling service, and actual daily job
+completion. It reports a failed job or a missing completion after 06:45 local
+time. A queued job alone does not satisfy that check.
 
 ## Why 06:00
 
@@ -95,16 +93,16 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 ```text
 05:30  dune-daily-maintenance-schedule.timer fires
 05:30  scripts/schedule-daily-maintenance.sh reconciles/posts the restart job and verifies persistence
-05:30  staged candidate receives an early readiness check; uncertified falls back to current
+05:30  the scheduler checks the loaded build and dry-runs host restart admission from Admin
 05:30  first in-game warning is sent immediately
 05:30-05:55  warnings repeat every 5 minutes
 05:55-06:00  warnings repeat every 1 minute
 06:00  final "starting now" warning is sent
-06:00  exact staged candidate and signed receipt are revalidated
+06:00  loaded images and approved container identities are revalidated
 06:00  affected online players are soft-disconnected if the disconnect gates are enabled
 06:00  selected services are stopped
 06:00  maintenance backup is written and independently verified
-06:00  certified package images are loaded, or update is skipped on the current build
+06:00  daily restart keeps the currently loaded build
 06:00  if a newer Steam build was installed, kspls0 reboots and arms boot-time resume
 06:00  official DB upgrade patches are applied
 06:00  operator DB patch markers and stale player RabbitMQ sessions are cleaned
@@ -186,17 +184,17 @@ persisted job until the retry deadline, so a slow panel or lost HTTP response
 cannot silently skip the morning maintenance. The job carries a date key and
 is idempotent across timer retries.
 
-The timer is persistent. If the host is down at 05:30, systemd runs the
-scheduler after boot; it targets the next safe 06:00 local window instead of
-creating an immediate late restart.
+The timer is persistent. A missed activation can run after boot. Outside the
+scheduling window the scheduler refuses to announce downtime, and the next
+calendar activation still queues the next morning's restart.
 
-Before it creates the daily job, the scheduler takes the hotfix updater lock,
-refreshes the Steam server package, and checks the installed, target, and
-image-loaded build IDs against the package tag. If a newer package is staged
-but the readiness receipt is unavailable or failing, it leaves the existing
-farm untouched and does not queue a current-build restart. All-farm starts
-repeat the build and running-image check after Compose starts; a stale or
-unverifiable build makes the start phase fail with the check output attached.
+Before it creates the daily job, the scheduler verifies the loaded images and
+dry-runs the guarded stop from the running Admin container. It retries a failed
+preflight within the scheduling window. The same preflight can be run without
+scheduling with `scripts/schedule-daily-maintenance.sh --preflight-only`.
+The installed unit selects `current` explicitly. When invoked separately with
+`certified` or `automatic`, the scheduler retains its Steam refresh and
+candidate admission checks.
 
 To enable a host reboot only when maintenance actually installs a newer Steam
 build, first install the boot-time resume service on `kspls0`:
@@ -266,10 +264,10 @@ failed even when service recovery succeeds. For an intentional shutdown, the
 target remains offline. Every execution produces a signed stage-by-stage
 outcome; see [`maintenance-intelligence.md`](maintenance-intelligence.md).
 
-For all-farm jobs using the `current` policy, preflight now refuses to stop the
-farm unless the downloaded Steam package, loaded build ID, and configured
-image tag agree. The `certified` policy remains the path for applying a staged
-new build after its backup and readiness gates pass.
+For all-farm jobs using the `current` policy, the running image identities must
+match the configured local images. The guarded host validates approved container
+identities before stopping or starting them and verifies the loaded images again
+after recovery. A separately staged build does not affect that check.
 
 ## Restart Batching
 

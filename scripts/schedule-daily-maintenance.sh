@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/schedule-daily-maintenance.sh
+Usage: scripts/schedule-daily-maintenance.sh [--preflight-only]
 
 Schedules the daily executed, backed-up, announced all-services maintenance
 restart through the local DASH admin panel.
@@ -25,6 +25,7 @@ Environment:
                                         Default: false
   DUNE_DAILY_RESTART_UPDATE_POLICY       current, certified, or automatic. Default: certified.
                                         Certified candidates are revalidated before disconnect.
+  DUNE_DAILY_RESTART_GUARDED             Verify the host API from the Admin container before scheduling.
   DUNE_DAILY_RESTART_MESSAGE            Announcement text.
 USAGE
 }
@@ -34,6 +35,8 @@ case "${1:-}" in
     usage
     exit 0
     ;;
+  --preflight-only|"") ;;
+  *) usage >&2; exit 2 ;;
 esac
 
 repo_dir="${DUNE_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -104,62 +107,101 @@ check_schedule_window() {
   exit 2
 }
 
+guarded_preflight() {
+  local project containers
+  project="$(env_or_file DUNE_RESTART_COMPOSE_PROJECT)"
+  project="${project:-$(env_or_file COMPOSE_PROJECT_NAME)}"
+  containers="$(docker ps -q --filter "label=com.docker.compose.project=${project:-dune_server}" \
+    --filter label=com.docker.compose.service=admin-panel)" || return 1
+  if [[ ! "$containers" =~ ^[0-9a-f]{12,64}$ ]]; then
+    printf 'daily maintenance requires exactly one running project Admin container\n' >&2
+    return 1
+  fi
+  timeout 150 docker exec -w /workspace "$containers" /bin/sh -ec '
+    test -n "$DUNE_RESTART_API_SOCKET" && test -S "$DUNE_RESTART_API_SOCKET"
+    python3 scripts/check-current-steam-build.py .env
+    DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS=45 DUNE_RESTART_DRY_RUN=true DUNE_RESTART_PHASE=stop \
+      DUNE_RESTART_ACTION=restart DUNE_RESTART_TARGET=all scripts/restart-target.sh all
+  '
+}
+
+if [[ "${1:-}" == --preflight-only ]]; then
+  guarded_preflight
+  exit
+fi
+
 check_schedule_window
+
+update_policy="$(env_or_file DUNE_DAILY_RESTART_UPDATE_POLICY)"
+update_policy="${update_policy:-certified}"
+case "$update_policy" in
+  current|certified|automatic) ;;
+  *)
+    printf 'invalid DUNE_DAILY_RESTART_UPDATE_POLICY: %s\n' "$update_policy" >&2
+    exit 2
+    ;;
+esac
+guarded="${DUNE_DAILY_RESTART_GUARDED:-false}"
+steam_candidate_requires_certification=false
 
 # Refresh Steam's server package immediately before scheduling the full-farm
 # restart. This shares the updater lock so the maintenance job cannot race a
 # partially downloaded Tuesday patch and then restart the previously loaded
 # Docker build when update readiness is unavailable.
-hotfix_lock_file="$(env_or_file DUNE_HOTFIX_UPDATE_LOCK_FILE)"
-hotfix_lock_file="${hotfix_lock_file:-/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock}"
-hotfix_lock_dir="$(dirname -- "$hotfix_lock_file")"
-if [[ ! -d "$hotfix_lock_dir" ]]; then
-  if ! mkdir -p "$hotfix_lock_dir"; then
-    printf 'fail: cannot create Steam update lock directory: %s\n' "$hotfix_lock_dir" >&2
-    exit 1
-  fi
-fi
-exec 9>"$hotfix_lock_file"
-if ! flock -w 1800 9; then
-  printf 'fail: timed out waiting for the Steam hotfix updater lock\n' >&2
-  exit 1
-fi
-
-steamcmd_enabled="$(env_or_file DUNE_RESTART_STEAMCMD_UPDATE)"
-case "${steamcmd_enabled:-true}" in
-  1|true|yes|on) ;;
-  *)
-    printf 'fail: cannot verify the latest Steam server build while SteamCMD updates are disabled\n' >&2
-    exit 1
-    ;;
-esac
-if ! DUNE_RESTART_STEAM_UPDATE_MODE=steamcmd DUNE_RESTART_STEAMCMD_REQUIRED=true \
-    "$repo_dir/scripts/update-steam-tool.sh" "$env_file"; then
-  printf 'fail: SteamCMD could not refresh the latest server package; maintenance was not scheduled\n' >&2
-  exit 1
-fi
-set +e
-steam_check_output="$("$repo_dir/scripts/check-steam-update.sh" "$env_file" 2>&1)"
-steam_check_rc=$?
-set -e
-printf '%s\n' "$steam_check_output"
-steam_candidate_requires_certification=false
-case "$steam_check_rc" in
-  0)
-    ;;
-  1)
-    if grep -Eq 'status: update available|status: same tag but Steam build changed' <<<"$steam_check_output"; then
-      steam_candidate_requires_certification=true
-    else
-      printf 'fail: Steam build check returned 1 without a recognized update state\n' >&2
+prepare_update_candidate() {
+  hotfix_lock_file="$(env_or_file DUNE_HOTFIX_UPDATE_LOCK_FILE)"
+  hotfix_lock_file="${hotfix_lock_file:-/var/lib/dune-hotfix-auto-update/dune-hotfix-auto-update.lock}"
+  hotfix_lock_dir="$(dirname -- "$hotfix_lock_file")"
+  if [[ ! -d "$hotfix_lock_dir" ]]; then
+    if ! mkdir -p "$hotfix_lock_dir"; then
+      printf 'fail: cannot create Steam update lock directory: %s\n' "$hotfix_lock_dir" >&2
       exit 1
     fi
-    ;;
-  *)
-    printf 'fail: latest Steam server build could not be verified; maintenance was not scheduled\n' >&2
-    exit "$steam_check_rc"
-    ;;
-esac
+  fi
+  exec 9>"$hotfix_lock_file"
+  if ! flock -w 1800 9; then
+    printf 'fail: timed out waiting for the Steam hotfix updater lock\n' >&2
+    exit 1
+  fi
+
+  steamcmd_enabled="$(env_or_file DUNE_RESTART_STEAMCMD_UPDATE)"
+  case "${steamcmd_enabled:-true}" in
+    1|true|yes|on) ;;
+    *)
+      printf 'fail: cannot verify the latest Steam server build while SteamCMD updates are disabled\n' >&2
+      exit 1
+      ;;
+  esac
+  if ! DUNE_RESTART_STEAM_UPDATE_MODE=steamcmd DUNE_RESTART_STEAMCMD_REQUIRED=true \
+      "$repo_dir/scripts/update-steam-tool.sh" "$env_file"; then
+    printf 'fail: SteamCMD could not refresh the latest server package; maintenance was not scheduled\n' >&2
+    exit 1
+  fi
+  set +e
+  steam_check_output="$("$repo_dir/scripts/check-steam-update.sh" "$env_file" 2>&1)"
+  steam_check_rc=$?
+  set -e
+  printf '%s\n' "$steam_check_output"
+  case "$steam_check_rc" in
+    0)
+      ;;
+    1)
+      if grep -Eq 'status: update available|status: same tag but Steam build changed' <<<"$steam_check_output"; then
+        steam_candidate_requires_certification=true
+      else
+        printf 'fail: Steam build check returned 1 without a recognized update state\n' >&2
+        exit 1
+      fi
+      ;;
+    *)
+      printf 'fail: latest Steam server build could not be verified; maintenance was not scheduled\n' >&2
+      exit "$steam_check_rc"
+      ;;
+  esac
+}
+if [[ "$update_policy" != current ]]; then
+  prepare_update_candidate
+fi
 
 if [[ -z "$admin_port" ]]; then
   admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
@@ -197,16 +239,6 @@ token="$(read_env DUNE_ADMIN_TOKEN || true)"
 require_token="$(read_env DUNE_ADMIN_REQUIRE_TOKEN || true)"
 require_readiness="$(read_env DUNE_UPDATE_REQUIRE_READINESS_RECEIPT || true)"
 require_readiness="${require_readiness:-true}"
-update_policy="$(env_or_file DUNE_DAILY_RESTART_UPDATE_POLICY)"
-update_policy="${update_policy:-certified}"
-case "$update_policy" in
-  current|certified|automatic) ;;
-  *)
-    printf 'invalid DUNE_DAILY_RESTART_UPDATE_POLICY: %s\n' "$update_policy" >&2
-    exit 2
-    ;;
-esac
-
 if [[ -z "$token" ]]; then
   case "${require_token,,}" in
     1|true|yes|on)
@@ -307,7 +339,8 @@ tolerance = float(sys.argv[3])
 state = json.load(sys.stdin)
 for job in state.get("jobs", []):
     if job.get("status") not in ("scheduled", "executing", "awaiting_reboot"):
-        continue
+        if job.get("status") != "executed" or job.get("automaticDailyMaintenanceKey") != daily_key:
+            continue
     if job.get("action") != "restart" or job.get("target") != "all":
         continue
     if not job.get("execute") or not job.get("backup"):
@@ -337,6 +370,10 @@ verify_scheduled_job() {
 
 schedule_once() {
   local contract_request contract_response contract_required contract_token response
+  if [[ "$guarded" == true ]] && ! guarded_preflight; then
+    printf 'daily maintenance host preflight failed before scheduling\n' >&2
+    return 1
+  fi
   if verify_scheduled_job; then
     return 0
   fi

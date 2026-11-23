@@ -4,11 +4,13 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 env_file=".env"
 versions_only=false
+loaded_only=false
 for arg in "$@"; do
   case "$arg" in
     --versions-only) versions_only=true ;;
+    --loaded-only) loaded_only=true; versions_only=true ;;
     -h|--help)
-      printf 'Usage: %s [env-file] [--versions-only]\n' "$0"
+      printf 'Usage: %s [env-file] [--versions-only | --loaded-only]\n' "$0"
       exit 0
       ;;
     *) env_file="$arg" ;;
@@ -168,6 +170,13 @@ while IFS=$'\t' read -r container_id service; do
     printf 'running image mismatch: service=%s container=%s running=%s expected_tag=%s\n' \
       "$service" "$container_id" "$image" "$expected_tag"
     mismatches=$((mismatches + 1))
+  elif [[ "$loaded_only" == true ]]; then
+    actual_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+    expected_id="$(docker image inspect --format '{{.Id}}' "$image")"
+    if [[ ! "$expected_id" =~ ^sha256:[0-9a-f]{64}$ || "$actual_id" != "$expected_id" ]]; then
+      printf 'running image identity mismatch: service=%s expected_tag=%s\n' "$service" "$expected_tag" >&2
+      mismatches=$((mismatches + 1))
+    fi
   fi
 done < <(
   docker ps \
@@ -183,6 +192,11 @@ if [[ "$mismatches" -ne 0 ]]; then
   printf 'running image convergence: mismatch checked=%s mismatches=%s expected_tag=%s\n' \
     "$checked" "$mismatches" "$expected_tag"
   exit 1
+fi
+
+if [[ "$loaded_only" == true ]]; then
+  printf 'running image convergence: loaded images verified checked=%s expected_tag=%s\n' "$checked" "$expected_tag"
+  exit 0
 fi
 
 build_check_output=""

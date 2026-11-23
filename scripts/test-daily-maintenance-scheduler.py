@@ -131,6 +131,31 @@ else:
         self.assertIn("staged but not certified", completed.stderr)
         self.assertFalse(self.capture.exists())
 
+    def test_guarded_current_build_queues_without_steam_and_requires_preflight(self):
+        docker = self.bin / "docker"
+        docker.write_text(
+            "#!/bin/sh\ncase \"$1\" in\n"
+            "  ps) printf '0123456789ab\\n' ;;\n"
+            "  exec) exit \"${FAKE_PREFLIGHT_EXIT:-0}\" ;;\n"
+            "  *) exit 88 ;;\nesac\n",
+            encoding="utf-8",
+        )
+        docker.chmod(0o755)
+        options = {
+            "DUNE_DAILY_RESTART_UPDATE_POLICY": "current",
+            "DUNE_DAILY_RESTART_GUARDED": "true",
+            "DUNE_RESTART_STEAMCMD_UPDATE": "false",
+            "DUNE_DAILY_RESTART_RETRY_SECONDS": "1",
+            "DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS": "1",
+        }
+        blocked = self.invoke({}, FAKE_PREFLIGHT_EXIT="1", **options)
+        self.assertNotEqual(0, blocked.returncode)
+        self.assertIn("host preflight failed before scheduling", blocked.stderr)
+        self.assertFalse(self.capture.exists())
+        queued = self.invoke({}, **options)
+        self.assertEqual(0, queued.returncode, queued.stderr)
+        self.assertEqual("current", json.loads(self.capture.read_text())["update_policy"])
+
     def test_uncertified_candidate_falls_back_to_current_build_restart(self):
         completed = self.invoke(self.update_readiness(False))
         self.assertEqual(0, completed.returncode, completed.stderr)

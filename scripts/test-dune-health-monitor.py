@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise alert transitions without contacting systemd, Docker, or mail."""
+import datetime
+import json
 import os
 from pathlib import Path
 import shutil
@@ -28,7 +30,10 @@ service="${2:-}"
 case "$1" in
   show)
     case "$*" in
-      *LoadState*) echo loaded ;;
+      *LoadState*)
+        if [[ "$service" == dune-daily-maintenance-schedule.service && ! -e "$TEST_ROOT/daily" ]]; then
+          echo not-found
+        else echo loaded; fi ;;
       *ActiveState*)
         if [[ "$service" == dune-hotfix-auto-update.service ]]; then
           cat "$TEST_ROOT/updater"
@@ -102,6 +107,21 @@ else echo 'OK: required always-on partitions are ready and connected.'; fi
                 run("failed")
                 self.assertEqual((root / "checks").read_text(), before)
                 self.assertEqual(len(mail()), 3)
+
+            (root / "daily").touch()
+            (root / "backups/admin-panel").mkdir(parents=True)
+            state = root / "backups/admin-panel/restart-jobs.json"
+            now = datetime.datetime.now()
+            day = (now if now.time() >= datetime.time(6, 45) else now - datetime.timedelta(days=1)).date()
+            job = {"automaticDailyMaintenance": True, "automaticDailyMaintenanceKey": day.isoformat(),
+                   "target": "all", "action": "restart", "execute": True, "backup": True,
+                   "status": "failed"}
+            state.write_text(json.dumps({"jobs": [job]}))
+            run("inactive", steam="0", farm="good")
+            self.assertIn("Dune daily maintenance failed", (root / "state/findings.txt").read_text())
+            state.write_text(json.dumps({"jobs": [job, {**job, "status": "executed"}]}))
+            run("inactive", steam="0", farm="good")
+            self.assertEqual(mail()[-1], "[Dune] Server health recovered")
 
 
 if __name__ == "__main__":

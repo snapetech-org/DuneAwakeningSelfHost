@@ -111,14 +111,14 @@ class RuntimeSecurityTests(unittest.TestCase):
             security.configuration(self.root, self.settings)
 
     def verifier(self, override=True, actual_id=None, control=False, control_pin=True,
-                 control_vendor_tag=None):
+                 control_vendor_tag=None, mode="--versions-only", steam_rc=0):
         scripts = self.root / "scripts"
         scripts.mkdir(exist_ok=True)
         (self.root / "admin").mkdir(exist_ok=True)
         for name in ("runtime-security.py", "verify-running-image-tag.sh"):
             shutil.copyfile(ROOT / "scripts" / name, scripts / name)
         shutil.copyfile(ROOT / "admin/runtime_security.py", self.root / "admin/runtime_security.py")
-        (scripts / "check-steam-update.sh").write_text("#!/bin/sh\nexit 0\n")
+        (scripts / "check-steam-update.sh").write_text(f"#!/bin/sh\nexit {steam_rc}\n")
         (scripts / "check-steam-update.sh").chmod(0o700)
         settings = dict(self.settings)
         if not override:
@@ -144,12 +144,19 @@ class RuntimeSecurityTests(unittest.TestCase):
         docker.chmod(0o700)
         env = {k: v for k, v in os.environ.items() if k not in security.KEYS}
         env["PATH"] = str(self.root) + os.pathsep + env["PATH"]
-        return subprocess.run(["bash", str(scripts / "verify-running-image-tag.sh"), str(env_file), "--versions-only"],
+        return subprocess.run(["bash", str(scripts / "verify-running-image-tag.sh"), str(env_file), mode],
                               env=env, capture_output=True, text=True, timeout=15)
 
     def test_running_verifier_accepts_qualified_image(self):
         result = self.verifier()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_loaded_only_verifies_running_images_without_consulting_staged_package(self):
+        result = self.verifier(mode="--loaded-only", steam_rc=1)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("loaded images verified", result.stdout)
+        drift = self.verifier(mode="--loaded-only", steam_rc=1, actual_id="sha256:" + "c" * 64)
+        self.assertNotEqual(drift.returncode, 0)
 
     def test_running_verifier_rejects_actual_digest_drift(self):
         result = self.verifier(actual_id="sha256:" + "c" * 64)

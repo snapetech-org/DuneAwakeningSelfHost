@@ -259,7 +259,11 @@ while (( SECONDS < deadline )); do
         printf 'latest Steam build check is required for a full-farm start but the verifier is missing\n' >&2
         exit 1
       fi
-      "$build_check_script" "$env_file" --versions-only
+      if [[ -n "${DUNE_COMPOSE_APPROVED_CONFIGURATION_FILE:-}" ]]; then
+        "$build_check_script" "$env_file" --loaded-only
+      else
+        "$build_check_script" "$env_file" --versions-only
+      fi
     fi
     if [[ "$text_router_recreated" == "true" ]]; then
       printf 'post-start recovery recreated text-router and verified RMQ/auth routing\n'
